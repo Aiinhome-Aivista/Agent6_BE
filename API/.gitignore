@@ -1,0 +1,11 @@
+venv
+env
+__pycache__
+.env
+.env.local
+.zip
+/chroma_db
+/graphs
+/policies
+*.pdf
+API/chroma_db/

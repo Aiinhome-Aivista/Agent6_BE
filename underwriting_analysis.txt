@@ -1,0 +1,79 @@
+{
+  "applicant_analysis": {
+    "case_id": "CASE-BBA1A6B7",
+    "applicant_name": "Saikat Sutradhar",
+    "age": 33,
+    "evaluated_factors": [
+      {
+        "factor": "Age",
+        "rule_name": "Low-Risk Bracket",
+        "raw_score": 0,
+        "weight_applied": 0.25,
+        "weighted_score": 0.0,
+        "justification": "Age 33 falls within the low-risk bracket (25-40 years). No age-related loading applied.",
+        "why_score_assigned": "The applicant is 33 years old, which is under the threshold for moderate or high-risk age rules (which start at age 46+ and 61+ respectively). Thus, the base penalty is 0.",
+        "effects": "Does not trigger any premium loading, exclusion, or waiting period."
+      },
+      {
+        "factor": "BMI",
+        "rule_name": "Normal BMI Range",
+        "raw_score": 0,
+        "weight_applied": 0.15,
+        "weighted_score": 0.0,
+        "justification": "Assumed normal BMI (no declaration of obesity or underweight). No BMI-related loading.",
+        "why_score_assigned": "No clinical data suggested abnormal BMI (>30 or <18.5). It is treated as standard.",
+        "effects": "No premium loading."
+      },
+      {
+        "factor": "Disease History",
+        "rule_name": "No Pre-existing Disease",
+        "raw_score": 0,
+        "weight_applied": 0.25,
+        "weighted_score": 0.0,
+        "justification": "No pre-existing diseases declared. No PED waiting period required.",
+        "why_score_assigned": "The application did not mention conditions like Cancer, Heart Disease, Diabetes, or Hypertension.",
+        "effects": "No exclusions and no specific waiting periods applied."
+      },
+      {
+        "factor": "Smoking & Alcohol",
+        "rule_name": "No History Declared",
+        "raw_score": 0,
+        "weight_applied": 0.15,
+        "weighted_score": 0.0,
+        "justification": "No history declared. No loading applied.",
+        "why_score_assigned": "No evidence of regular or occasional tobacco or alcohol usage was found in the documentation.",
+        "effects": "No lifestyle premium loading."
+      },
+      {
+        "factor": "Claim History",
+        "rule_name": "Clean History",
+        "raw_score": 0,
+        "weight_applied": 0.10,
+        "weighted_score": 0.0,
+        "justification": "No prior claims. Clean history supports standard terms.",
+        "why_score_assigned": "The applicant does not have a past claims ratio exceeding 0.5 or 1.0.",
+        "effects": "Supports standard approval terms."
+      },
+      {
+        "factor": "Lifestyle",
+        "rule_name": "Moderate Lifestyle Risk",
+        "raw_score": 30,
+        "weight_applied": 0.10,
+        "weighted_score": 3.0,
+        "justification": "Lifestyle score of 30/50 (moderate) does not warrant premium loading.",
+        "why_score_assigned": "The risk engine assigned a moderate lifestyle risk score (30 out of 50) based on occupation or location factors.",
+        "effects": "Slight bump in overall risk score (+3.0), but does not cross the threshold for adverse action."
+      }
+    ],
+    "rules_summary": {
+      "rules_triggered": ["Moderate Lifestyle Risk"],
+      "rules_passed": ["Low-Risk Bracket", "Normal BMI Range", "No Pre-existing Disease", "No Smoking/Alcohol History", "Clean Claim History"],
+      "rules_failed": []
+    },
+    "final_recommendation": {
+      "status": "Approve",
+      "reasoning": "The applicant's total cumulative risk score is 3.0 / 100, which falls well within the 'LOW' risk bracket (typically 0-25). There are no critical health conditions, no adverse habits, and no history of extensive claims. Therefore, the application qualifies for standard terms."
+    },
+    "step_by_step_calculation": "Total Risk Score = (Age: 0*0.25) + (BMI: 0*0.15) + (Disease: 0*0.25) + (Habits: 0*0.15) + (Claims: 0*0.10) + (Lifestyle: 30*0.10) => 0 + 0 + 0 + 0 + 0 + 3.0 = 3.0 / 100"
+  }
+}
