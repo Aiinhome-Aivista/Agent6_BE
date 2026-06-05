@@ -27,21 +27,34 @@ async def create_case(case: CaseCreate, current_user: dict = Depends(get_current
 
     case_number = f"CASE-{uuid.uuid4().hex[:8].upper()}"
     
-    # Calculate SLA based on priority
+    # Calculate SLA based on configuration
     from datetime import datetime, timedelta
-    sla_hours = {"Critical": 12, "High": 24, "Medium": 48, "Low": 72}
-    sla_due_at = datetime.now() + timedelta(hours=sla_hours.get(case.priority, 48))
+    config_row = fetch_one("SELECT config_value FROM system_config WHERE config_key = 'SLA_DAYS'")
+    max_days = int(config_row["config_value"]) if config_row else 5
+    sla_due_at = datetime.now() + timedelta(days=max_days)
     
+    # Auto-assign to an underwriter (role_id = 4) with the least number of active cases
+    assignee_row = fetch_one("""
+        SELECT u.id 
+        FROM users u 
+        LEFT JOIN underwriting_cases uc ON u.id = uc.assigned_to AND uc.status_id IN (1, 2) 
+        WHERE u.role_id = 4 AND u.is_active = 1
+        GROUP BY u.id 
+        ORDER BY COUNT(uc.id) ASC 
+        LIMIT 1
+    """)
+    assigned_to = assignee_row["id"] if assignee_row else None
+
     sql = """
-        INSERT INTO underwriting_cases (case_number, applicant_name, policy_type, product_type_id, existing_policy_details, requested_coverage, priority, sla_due_at, status_id, user_id, application_type)
-        VALUES (%s, %s, %s, COALESCE((SELECT id FROM product_types WHERE product_name = %s), 1), %s, %s, %s, %s, (SELECT id FROM case_statuses WHERE status_name = 'Submitted'), %s, %s)
+        INSERT INTO underwriting_cases (case_number, applicant_name, policy_type, product_type_id, existing_policy_details, requested_coverage, priority, sla_due_at, status_id, user_id, application_type, assigned_to)
+        VALUES (%s, %s, %s, COALESCE((SELECT id FROM product_types WHERE product_name = %s), 1), %s, %s, %s, %s, (SELECT id FROM case_statuses WHERE status_name = 'Submitted'), %s, %s, %s)
     """
     try:
         case_id = execute(sql, (
             case_number, case.applicant_name, case.policy_type, case.product_type,
             case.existing_policy_details, case.requested_coverage, 
             case.priority, sla_due_at.strftime('%Y-%m-%d %H:%M:%S'),
-            current_user["user_id"], case.application_type
+            current_user["user_id"], case.application_type, assigned_to
         ))
         return {"message": "Case submitted successfully", "case_id": case_id, "case_number": case_number}
     except Exception as e:
@@ -60,10 +73,11 @@ async def update_case(case_id: int, case: CaseUpdate, current_user: dict = Depen
     """Updates an existing case details and resets status to pending."""
     if current_user["role_id"] not in [5, 1]:
         raise HTTPException(status_code=403, detail="Not authorized.")
-    # Calculate SLA based on priority
+    # Calculate SLA based on configuration
     from datetime import datetime, timedelta
-    sla_hours = {"Critical": 12, "High": 24, "Medium": 48, "Low": 72}
-    sla_due_at = datetime.now() + timedelta(hours=sla_hours.get(case.priority, 48))
+    config_row = fetch_one("SELECT config_value FROM system_config WHERE config_key = 'SLA_DAYS'")
+    max_days = int(config_row["config_value"]) if config_row else 5
+    sla_due_at = datetime.now() + timedelta(days=max_days)
 
     sql = """
         UPDATE underwriting_cases 
@@ -109,22 +123,14 @@ async def get_cases(current_user: dict = Depends(get_current_user)):
     role_id = current_user["role_id"]
     user_id = current_user["user_id"]
 
-    if role_id == 5:  # Broker
-        sql = """SELECT uc.id, uc.case_number, uc.applicant_name, uc.policy_type, uc.application_type, pt.product_name AS product_type, uc.requested_coverage, uc.existing_policy_details, cs.status_name AS status, uc.priority, uc.sla_due_at, uc.created_at, uc.company_name, uc.product_name, uc.underwriter_remarks,
-                 (SELECT role_id FROM case_mail_log cml WHERE cml.case_id = uc.id AND cml.is_escalated = 0 AND cml.action_taken = 0 ORDER BY cml.id DESC LIMIT 1) AS current_role_id
-                 FROM underwriting_cases uc 
-                 LEFT JOIN case_statuses cs ON uc.status_id = cs.id
-                 LEFT JOIN product_types pt ON uc.product_type_id = pt.id
-                 WHERE uc.user_id = %s ORDER BY uc.created_at DESC"""
-        params = (user_id,)
-    else:
-        sql = """SELECT uc.id, uc.case_number, uc.applicant_name, uc.policy_type, uc.application_type, pt.product_name AS product_type, uc.requested_coverage, uc.existing_policy_details, cs.status_name AS status, uc.priority, uc.sla_due_at, uc.created_at, uc.company_name, uc.product_name, uc.underwriter_remarks,
-                 (SELECT role_id FROM case_mail_log cml WHERE cml.case_id = uc.id AND cml.is_escalated = 0 AND cml.action_taken = 0 ORDER BY cml.id DESC LIMIT 1) AS current_role_id
-                 FROM underwriting_cases uc 
-                 LEFT JOIN case_statuses cs ON uc.status_id = cs.id
-                 LEFT JOIN product_types pt ON uc.product_type_id = pt.id
-                 ORDER BY uc.created_at DESC"""
-        params = ()
+    sql = """SELECT uc.id, uc.case_number, uc.applicant_name, uc.policy_type, uc.application_type, pt.product_name AS product_type, uc.requested_coverage, uc.existing_policy_details, cs.status_name AS status, uc.priority, uc.sla_due_at, uc.created_at, uc.company_name, uc.product_name, uc.underwriter_remarks, uc.user_id, uc.assigned_to,
+             (SELECT COALESCE(full_name, username) FROM users WHERE id = uc.assigned_to) AS assigned_user,
+             (SELECT role_id FROM case_mail_log cml WHERE cml.case_id = uc.id AND cml.is_escalated = 0 AND cml.action_taken = 0 ORDER BY cml.id DESC LIMIT 1) AS current_role_id
+             FROM underwriting_cases uc 
+             LEFT JOIN case_statuses cs ON uc.status_id = cs.id
+             LEFT JOIN product_types pt ON uc.product_type_id = pt.id
+             ORDER BY uc.created_at DESC"""
+    params = ()
 
     try:
         return fetch_all(sql, params)
@@ -181,8 +187,8 @@ async def check_documents(
                 pass
                 
     # Call Mistral
-    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-    MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+    MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
     
     if not MISTRAL_API_KEY or MISTRAL_API_KEY == "your_mistral_key_here":
         return {"missing": []}
@@ -300,7 +306,7 @@ UPLOADED DOCUMENT TEXT
 Respond ONLY with the JSON object. Do not include any other text or markdown formatting.
 """
 
-        client = MistralClient(api_key=MISTRAL_API_KEY, timeout=60)
+        client = MistralClient(api_key=MISTRAL_API_KEY, timeout=60, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
         response = client.chat(
             model=MISTRAL_MODEL,
             messages=[ChatMessage(role="user", content=prompt)],
@@ -470,7 +476,23 @@ async def upload_documents(case_id: int, files: list[UploadFile] = File(...), cu
         "recommendation": risk_result["recommendation"]
     }
 
-
+@router.post("/{case_id}/re-evaluate")
+async def re_evaluate_case(case_id: int):
+    """Re-runs risk analysis for a case."""
+    try:
+        from services.risk_engine import analyse_risk
+        risk_result = analyse_risk(case_id=case_id)
+        
+        execute("DELETE FROM risk_assessments WHERE case_id = %s", (case_id,))
+        execute(
+            "INSERT INTO risk_assessments (case_id, risk_score, risk_level, confidence_score, findings) VALUES (%s, %s, %s, %s, %s)",
+            (case_id, risk_result["risk_score"], risk_result["risk_level"], risk_result.get("ai_confidence", 0.85), json.dumps(risk_result))
+        )
+        return {"message": "Re-evaluation complete", "risk_score": risk_result["risk_score"]}
+    except Exception as e:
+        import traceback
+        print(f"[RE-EVAL ERROR] {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{case_id}/risk")
 async def get_risk_assessment(case_id: int, current_user: dict = Depends(get_current_user)):
@@ -528,6 +550,8 @@ Here is the highly relevant patient document context retrieved from the database
 {context_text}
 ---
 
+CRITICAL INSTRUCTION: You must include citations for all claims you make using the exact source document filenames provided in the context. Format your citations like this: "The patient has a history of hypertension [Source Document: filename.pdf]."
+
 Chat History:
 """
     # Append recent chat history if present
@@ -538,8 +562,8 @@ Chat History:
     prompt += f"Underwriter: {request.message}\nAssistant:"
 
     # 4. Call Mistral AI
-    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-    MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+    MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
 
     if not MISTRAL_API_KEY or MISTRAL_API_KEY == "your_mistral_key_here":
         return {"response": "Mistral AI API Key is not configured."}
@@ -548,7 +572,7 @@ Chat History:
         from mistralai.client import MistralClient
         from mistralai.models.chat_completion import ChatMessage
         
-        client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300)
+        client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
         response = client.chat(
             model=MISTRAL_MODEL,
             messages=[ChatMessage(role="user", content=prompt)],
@@ -565,6 +589,8 @@ Chat History:
 class DecisionRequest(BaseModel):
     decision: str
     remarks: str
+    referred_to_user_id: Optional[int] = None
+    rejection_reason: Optional[str] = None
 
 @router.post("/{case_id}/decision")
 async def make_decision(case_id: int, request: DecisionRequest, current_user: dict = Depends(get_current_user)):
@@ -636,7 +662,11 @@ async def make_decision(case_id: int, request: DecisionRequest, current_user: di
             # Send email for manual escalation
             from services.mail_service import send_bulk_emails
             try:
-                managers = fetch_all("SELECT id, username as name, email FROM users WHERE role_id = 3 AND is_active = 1")
+                if request.referred_to_user_id:
+                    managers = fetch_all("SELECT id, username as name, email FROM users WHERE id = %s AND is_active = 1", (request.referred_to_user_id,))
+                else:
+                    managers = fetch_all("SELECT id, username as name, email FROM users WHERE role_id = 3 AND is_active = 1")
+                
                 if managers:
                     subject = f"[IUA] 🚨 ESCALATED: Case ID {case_id} — Manual Escalation"
                     body = f"Case {case_id} was manually escalated by an Underwriter.<br>Remarks: {request.remarks}"
@@ -658,7 +688,7 @@ async def make_decision(case_id: int, request: DecisionRequest, current_user: di
         elif request.decision.lower() == "approve":
             current_rejections = 0 # reset on successful path
 
-        execute("UPDATE underwriting_cases SET status_id = (SELECT id FROM case_statuses WHERE status_name = %s), underwriter_remarks = %s, rejection_count = %s WHERE id = %s", (final_status, final_remarks, current_rejections, case_id))
+        execute("UPDATE underwriting_cases SET status_id = (SELECT id FROM case_statuses WHERE status_name = %s), underwriter_remarks = %s, rejection_count = %s, assigned_to = %s, rejection_reason = %s WHERE id = %s", (final_status, final_remarks, current_rejections, request.referred_to_user_id, request.rejection_reason, case_id))
         execute(
             "INSERT INTO underwriting_decisions (case_id, user_id, decision, remarks) VALUES (%s, %s, %s, %s)",
             (case_id, current_user["user_id"], final_decision, final_remarks)

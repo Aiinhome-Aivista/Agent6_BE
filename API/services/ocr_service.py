@@ -1,5 +1,4 @@
 import os
-import PyPDF2
 
 def extract_text(file_path: str) -> str:
     """Extracts raw text from a PDF file."""
@@ -8,12 +7,24 @@ def extract_text(file_path: str) -> str:
     
     if ext == ".pdf":
         try:
-            with open(file_path, "rb") as f:
-                reader = PyPDF2.PdfReader(f)
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
+            # Try using PyMuPDF (fitz) first as it is much better at extracting text
+            import fitz
+            with fitz.open(file_path) as doc:
+                for page in doc:
+                    text += page.get_text() + "\n"
+        except ImportError:
+            print("PyMuPDF not found. Falling back to PyPDF2...")
+            try:
+                import PyPDF2
+                with open(file_path, "rb") as f:
+                    reader = PyPDF2.PdfReader(f)
+                    for page in reader.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+            except Exception as e:
+                print(f"PyPDF2 extraction error: {e}")
+                text = "Error extracting PDF."
         except Exception as e:
             print(f"PDF extraction error: {e}")
             text = "Error extracting PDF."

@@ -17,10 +17,10 @@ from services.claim_services import crawl_external_apis, parse_and_store_csv, ca
 from services.vector_store import query_rulebook_context, chroma_client, ef
 from arango import ArangoClient
 
-ARANGO_HOST     = os.getenv("ARANGO_HOST", "https://a71fd1666bd9.arangodb.cloud:8529")
-ARANGO_DB       = os.getenv("ARANGO_DB", "underwriting_db")
-ARANGO_USERNAME = os.getenv("ARANGO_USERNAME", "root")
-ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD", "TnHBO0Y4FwKptmr6GxrL")
+ARANGO_HOST     = os.getenv("ARANGO_URL")
+ARANGO_DB       = os.getenv("ARANGO_DB")
+ARANGO_USERNAME = os.getenv("ARANGO_USER")
+ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD")
 
 router = APIRouter(prefix="/claim-tracker", tags=["Claim Tracker"])
 
@@ -522,7 +522,7 @@ async def search_customer_claims(query: str, current_user: dict = Depends(get_cu
     neg_signals = []
     similar_claims = []
 
-    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
     if MISTRAL_API_KEY and MISTRAL_API_KEY != "your_mistral_key_here":
         try:
             from mistralai.client import MistralClient
@@ -554,7 +554,7 @@ Strictly respond with a JSON object in this exact format (no markdown wrappers, 
   ]
 }}
 """
-            client = MistralClient(api_key=MISTRAL_API_KEY, timeout=120)
+            client = MistralClient(api_key=MISTRAL_API_KEY, timeout=120, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
             response = client.chat(
                 model="mistral-tiny", 
                 messages=[ChatMessage(role="user", content=prompt)],
@@ -812,59 +812,6 @@ async def admin_upload_claims_csv(file: UploadFile = File(...), current_user: di
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=f"CSV ingestion failed: {str(e)}")
 
-
-# ==========================================
-# 3. EXTERNAL API CONFIGURATION CRUD ENDPOINTS
-# ==========================================
-@router.get("/admin/api-configs")
-async def get_api_configs(current_user: dict = Depends(get_current_user)):
-    print('HITTING GET API CONFIGS')
-    """Returns list of all external insurance company API configurations."""
-    # if current_user["role_id"] not in [1, 2]:
-    #      raise HTTPException(status_code=403, detail="Not authorized.")
-    configs = fetch_all("SELECT * FROM external_api_configs ORDER BY company_name ASC")
-    return configs
-
-@router.post("/admin/api-configs")
-async def add_api_config(config: ApiConfigCreate, current_user: dict = Depends(get_current_user)):
-    """Registers a new external company API integration profile."""
-    # Ensure Brokers (role_id=5) are not allowed to configure company APIs
-    if current_user["role_id"] == 5:
-         raise HTTPException(status_code=403, detail="Brokers are not authorized to configure company APIs.")
-         
-    try:
-        # Validate json format
-        json.loads(config.headers)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid custom headers format. Must be a valid JSON dictionary.")
-        
-    try:
-        execute("""
-            INSERT INTO external_api_configs (company_name, api_url, api_key, headers, auth_type, is_active)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE 
-                api_url = VALUES(api_url),
-                api_key = VALUES(api_key),
-                headers = VALUES(headers),
-                auth_type = VALUES(auth_type),
-                is_active = VALUES(is_active)
-        """, (config.company_name, config.api_url, config.api_key, config.headers, config.auth_type, 1 if config.is_active else 0))
-        
-        return {"message": f"Configuration for {config.company_name} saved successfully."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/admin/api-configs/{config_id}")
-async def delete_api_config(config_id: int, current_user: dict = Depends(get_current_user)):
-    """Deletes an external company API integration profile."""
-    # Ensure Brokers (role_id=5) are not allowed to delete company APIs
-    if current_user["role_id"] == 5:
-         raise HTTPException(status_code=403, detail="Brokers are not authorized to delete company APIs.")
-    try:
-        execute("DELETE FROM external_api_configs WHERE id = %s", (config_id,))
-        return {"message": "Configuration deleted successfully."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==========================================

@@ -60,8 +60,16 @@ def query_risk_context(query: str, case_id: int, n_results: int = 5) -> list[str
             n_results=n_results,
             where={"case_id": str(case_id)}
         )
+        
         docs = results.get("documents", [[]])[0]
-        return docs
+        metadatas = results.get("metadatas", [[]])[0]
+        
+        enriched_docs = []
+        for doc, meta in zip(docs, metadatas):
+            file_name = meta.get("file_name", "Unknown Document") if meta else "Unknown Document"
+            enriched_docs.append(f"[Source Document: {file_name}]\n{doc}")
+            
+        return enriched_docs
     except Exception as e:
         print(f"[ChromaDB] Query error: {e}")
         return []

@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from database.connection import fetch_one, execute
 from utils.security import get_password_hash, verify_password, create_access_token
+from utils.auth_deps import get_current_user
+from fastapi import Depends
 
 router = APIRouter(
     prefix="/auth",
@@ -44,7 +46,7 @@ async def register(user: UserRegister):
 @router.post("/login")
 async def login(user: UserLogin):
     # 1. Fetch user by username
-    db_user = fetch_one("SELECT id, username, email, hashed_password, role_id FROM users WHERE username = %s", (user.username,))
+    db_user = fetch_one("SELECT id, username, COALESCE(full_name, username) as display_name, email, hashed_password, role_id FROM users WHERE username = %s", (user.username,))
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid username or password")
     
@@ -62,7 +64,7 @@ async def login(user: UserLogin):
         "token_type": "bearer",
         "user": {
             "id": db_user["id"],
-            "username": db_user["username"],
+            "username": db_user["display_name"],
             "email": db_user["email"],
             "role_id": db_user["role_id"]
         }
@@ -85,3 +87,14 @@ async def get_audit_logs():
         return logs
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@router.get("/referral-targets")
+async def get_referral_targets(current_user: dict = Depends(get_current_user)):
+    try:
+        from database.connection import fetch_all
+        if current_user["role_id"] == 5:
+            return []
+        users = fetch_all("SELECT u.id, COALESCE(u.full_name, u.username) as full_name, u.email, r.name as role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.role_id <= %s AND u.role_id != 5 AND u.is_active = 1 AND u.id != %s", (current_user["role_id"], current_user["user_id"]))
+        return users
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

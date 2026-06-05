@@ -6,10 +6,10 @@ from services.vector_store import query_risk_context, query_rulebook_context
 
 load_dotenv()
 
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
 
-def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Type") -> dict:
+def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Type", application_type: str = "Existing Claim") -> dict:
     if not text:
         return {}
     text_lower = text.lower()
@@ -84,14 +84,15 @@ def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Ty
     email_match = re.search(r'\b(?:email\s*id|email)\s*[:\-]?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b', text_lower)
     if email_match: email = email_match.group(1)
         
-    medical_cond = None
-    med_match = re.search(r'\b(?:medical\s*condition|disease|illness)\s*[:\-]?\s*([a-z0-9\s\-]+?)(?:\n|,|\.|\bbmi\b|\bbp\b)', text_lower)
+    med_match = re.search(r'\b(?:medical\s*condition|disease|illness)\b\s*[:\-]?\s*([^\n,\.]+)', text_lower)
     if med_match:
         val = med_match.group(1).strip().title()
         if val.lower() not in ["none", "na", "n/a", "no major illness", "healthy"]:
             medical_cond = val
         else:
             medical_cond = "No Major Illness"
+    else:
+        medical_cond = None
 
     premium = None
     prem_match = re.search(r'\b(?:annual\s*premium|premium)\s*[:\-]?\s*(?:rs\.?|inr|₹|\$)?\s*([\d,]+)\b', text_lower)
@@ -111,6 +112,12 @@ def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Ty
     if "active lifestyle" in text_lower or "athlete" in text_lower: lifestyle = "Active"
     elif "moderate lifestyle" in text_lower or "exercises occasionally" in text_lower: lifestyle = "Moderate"
 
+    if application_type == "New Policy":
+        coverage = None
+        policy_num = None
+        premium = None
+        term = None
+
     return {
         "patient_details": {
             "age": age, "gender": gender, "occupation": occupation, "marital_status": marital_status,
@@ -129,15 +136,16 @@ def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Ty
 def detect_target_policy(raw_text: str) -> dict:
     import json
     import os
-    api_key = os.getenv("MISTRAL_API_KEY", "")
+    api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key or api_key == "your_mistral_key_here": return {"company_name": None, "product_name": None}
     try:
         from mistralai.client import MistralClient
         from mistralai.models.chat_completion import ChatMessage
-        client = MistralClient(api_key=api_key)
+        client = MistralClient(api_key=api_key, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
         prompt = f"Extract the target Insurance Company Name and Product/Policy Name from the applicant's text. Return ONLY a JSON object with 'company_name' and 'product_name'. If not explicitly mentioned, return null for that field.\n\nTEXT: {raw_text[:10000]}"
+        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
         resp = client.chat(
-            model="mistral-large-latest",
+            model=MISTRAL_MODEL,
             messages=[ChatMessage(role="user", content=prompt)],
             response_format={"type": "json_object"},
             temperature=0.1
@@ -151,8 +159,8 @@ def check_fraud_in_arango(case_id: int) -> bool:
     try:
         from arango import ArangoClient
         import os
-        client = ArangoClient(hosts=os.getenv("ARANGO_HOST", "https://a71fd1666bd9.arangodb.cloud:8529"))
-        db = client.db(os.getenv("ARANGO_DB", "underwriting_db"), username=os.getenv("ARANGO_USERNAME", "root"), password=os.getenv("ARANGO_PASSWORD", "TnHBO0Y4FwKptmr6GxrL"))
+        client = ArangoClient(hosts=os.getenv("ARANGO_URL"))
+        db = client.db(os.getenv("ARANGO_DB"), username=os.getenv("ARANGO_USER"), password=os.getenv("ARANGO_PASSWORD"))
         # Example AQL to find paths to known fraud nodes
         # Returning False by default for the realistic example workflow.
         return False
@@ -160,264 +168,127 @@ def check_fraud_in_arango(case_id: int) -> bool:
         print(f"[Fraud Check Error] {e}")
         return False
 
-def _call_llm(context_summary: str, rule_results: list, final_score: float, kb_context: str = "", application_type: str = "Existing Claim") -> dict:
+def _call_llm(context_summary: str, kb_context: str = "", application_type: str = "Existing Claim") -> dict:
     default_resp = {
-        "risk_score": final_score,
-        "risk_level": "LOW",
-        "decision": "Approve Standard Terms",
+        "risk_score": 0,
+        "risk_level": "UNKNOWN",
+        "decision": "Manual Review Required - Missing Knowledge Base Guidelines",
         "breakdown": [],
         "fraud_signals": [],
         "positive_signals": [],
         "negative_signals": [],
         "explainability": {
-            "why_approved_or_rejected": "LLM Failed. Used deterministic logic.",
+            "why_approved_or_rejected": "No relevant underwriting manuals were found in the Knowledge Base to process this application.",
             "why_loading_applied": "N/A",
-            "medical_impact": "N/A"
+            "medical_impact": "N/A",
+            "chance_of_approval_justification": "N/A"
         },
-        "final_calculation": "Deterministic fallback",
-        "underwriting_narrative": "AI unavailable."
+        "final_calculation": "N/A",
+        "underwriting_narrative": "AI could not determine risk due to missing guidelines."
     }
     
+    # Fallback early if KB is strictly empty
+    if not kb_context.strip():
+        return default_resp
+
     import os
-    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
     if not MISTRAL_API_KEY or MISTRAL_API_KEY == "your_mistral_key_here":
         return default_resp
 
     try:
         from mistralai.client import MistralClient
-        client = MistralClient(api_key=MISTRAL_API_KEY)
+        client = MistralClient(api_key=MISTRAL_API_KEY, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
+
+        prompt_logic = ""
+        if application_type == "New Policy":
+            prompt_logic = """
+You must follow these 8 STEPS for New Applicants:
+1. Identity Verification: Validate applicant demographics.
+2. Medical History Analysis: Check for pre-existing diseases.
+3. BMI & Vitals Check: Evaluate health metrics.
+4. Rulebook Mapping: Map conditions strictly to the KNOWLEDGE BASE CONTEXT.
+5. Base Premium Calculation: Determine base premium.
+6. Loading/Discount Calculation: Apply risk loadings or discounts.
+7. Waiting Period Assignment: Assign PED waiting periods.
+8. Final Decision: Synthesize findings into a final risk score and decision.
+"""
+        else:
+            prompt_logic = """
+You must follow these 10 STEPS for Existing Claims:
+1. Claim Triage: Identify the claim type.
+2. Identity Verification: Validate claimant details.
+3. Policy Validity Check: Ensure policy was active.
+4. Medical History Analysis: Evaluate past conditions.
+5. Rulebook Mapping: Map conditions strictly to the KNOWLEDGE BASE CONTEXT.
+6. Exclusions Check: Check for policy exclusions.
+7. Claim Adjudication: Determine eligibility.
+8. Deductions Calculation: Calculate non-payable amounts.
+9. Payout Calculation: Calculate final payable amount.
+10. Final Decision: Synthesize findings into a final risk score and decision.
+"""
 
         prompt = f"""You are a Senior Enterprise Health Insurance Underwriting AI Engine.
 
-Your task is to calculate a realistic underwriting risk score for a health insurance applicant using deterministic underwriting rules and explainable AI reasoning.
-
-IMPORTANT:
-- Perform REALISTIC enterprise underwriting analysis.
-- Use medical, lifestyle, financial, fraud, and claims-based evaluation.
-- Explain every score clearly.
-- Return ONLY valid JSON.
+Your task is to calculate a realistic underwriting risk score and make a decision for a health insurance applicant.
+CRITICAL RULE: You MUST base your evaluation STRICTLY on the KNOWLEDGE BASE CONTEXT provided below. 
+Do NOT use outside knowledge. If the KNOWLEDGE BASE CONTEXT does not contain enough rules or information to evaluate the applicant's specific conditions (like their specific disease, age, or BMI), you MUST set "risk_level" to "UNKNOWN" and "decision" to "Manual Review Required - Missing Knowledge Base Guidelines".
+{prompt_logic}
 
 ========================
-UNDERWRITING RULES
+KNOWLEDGE BASE CONTEXT
 ========================
-
-1. AGE RULES
-- Age 18-40 => Score 0
-- Age 41-55 => Score 50
-- Age 56-60 => Score 70
-- Age >60 => Score 80
-
-Weight = 25%
-
-------------------------
-
-2. BMI RULES
-- BMI 18.5-24.9 => Score 0
-- BMI 25-29.9 => Score 20
-- BMI 30-34.9 => Score 50
-- BMI >=35 => Score 70
-- BMI <18.5 => Score 15
-
-Weight = 15%
-
-------------------------
-
-3. DISEASE HISTORY RULES
-- No PED => Score 0
-- Diabetes => +30
-- Hypertension => +25
-- Cardiac Disease => +60
-- Cancer => +80
-- Multiple PED => cumulative scoring
-
-Weight = 25%
-
-------------------------
-
-4. SMOKING & ALCOHOL RULES
-- None => Score 0
-- Occasional => Score 20
-- Regular => Score 50
-
-Weight = 15%
-
-------------------------
-
-5. CLAIM HISTORY RULES
-- No prior claims => Score 0
-- 1 moderate claim => Score 20
-- Frequent claims => Score 40
-- Fraud suspicion => Score 80
-
-Weight = 10%
-
-------------------------
-
-6. LIFESTYLE RULES
-- Active Lifestyle => Score 0
-- Moderate Lifestyle => Score 15
-- Sedentary Lifestyle => Score 30
-
-Weight = 10%
-
-------------------------
-
-7. FRAUD RULES
-- Edited documents => +80
-- Mismatched data => +60
-- Blacklisted hospital => +100
-
-Weight = 20%
-
-========================
-FINAL SCORE FORMULA
-========================
-
-Final Risk Score =
-(Age × 0.25) +
-(BMI × 0.15) +
-(Disease × 0.25) +
-(Smoking × 0.15) +
-(Claims × 0.10) +
-(Lifestyle × 0.10) +
-(Fraud × 0.20)
-
-========================
-RISK LEVELS
-========================
-
-0-25 => LOW RISK
-26-50 => MEDIUM RISK
-51-75 => HIGH RISK
-76-100 => CRITICAL RISK
-
-========================
-DECISION LOGIC
-========================
-
-LOW => Approve Standard Terms
-MEDIUM => Approve With Loading / Refer
-HIGH => Senior Underwriter Review
-CRITICAL => Decline / Fraud Escalation
+{kb_context}
 
 ========================
 OUTPUT FORMAT
 ========================
-
 Return ONLY JSON:
-
 {{
-  "risk_score": number,
-  "risk_level": "LOW|MEDIUM|HIGH|CRITICAL",
-  "decision": "string",
-
+  "risk_score": number (0-100),
+  "risk_level": "LOW|MEDIUM|HIGH|CRITICAL|UNKNOWN",
+  "decision": "string (e.g. Approve Standard Terms, Refer Underwriter, Manual Review Required - Missing Knowledge Base Guidelines)",
   "breakdown": [
     {{
-      "factor": "Age",
-      "raw_score": number,
-      "weight": number,
-      "weighted_score": number,
-      "justification": "string",
-      "triggered_rules": ["string"]
+      "factor": "Age/BMI/Disease/etc",
+      "raw_score": "number (0 to 100, representing the risk penalty for this factor alone, where 0 is perfect/no risk and 100 is max risk)",
+      "weight": "number (the maximum points this factor contributes to the total 100 score, e.g., 30)",
+      "weighted_score": "number (must be exactly: raw_score * weight / 100)",
+      "justification": "Explanation based strictly on KB",
+      "triggered_rules": ["Quote the rule from KB"]
     }}
   ],
-
-  "fraud_signals": ["string"],
-  "positive_signals": ["string"],
-  "negative_signals": ["string"],
-
   "explainability": {{
     "why_approved_or_rejected": "string",
     "why_loading_applied": "string",
     "medical_impact": "string",
     "chance_of_approval_justification": "string"
   }},
-
-  "policy_eligibility": {{
-    "eligible_plans": [
-      {{
-        "plan_name": "string",
-        "allowed": true/false,
-        "reason": "string"
-      }}
-    ]
+  "policy_eligibility": {{ "eligible_plans": [ {{ "plan_name": "string", "allowed": true/false, "reason": "string" }} ] }},
+  "premium_calculation": {{ "premium_output": [ {{ "sum_assured": number, "base_premium": number, "risk_loading_percent": number, "final_premium": number }} ] }},
+  "claim_decision_engine": {{ "claim_eligibility": true/false, "approved_amount": number, "final_payable_amount": number, "deductions": [ {{ "name": "string", "amount": number }} ], "reason": "string" }},
+  "policy_information": {{ "policy_number": "string", "sum_insured": number, "used_sum_insured": number, "remaining_sum_insured": number, "waiting_period_completed": true/false }},
+  "claim_history": {{ "current_claim": {{ "date": "string", "amount_claimed": number, "claim_type": "string", "reason_for_claim": "string" }}, "earlier_claims": [ {{ "date": "string", "amount_claimed": number, "claim_type": "string", "reason_for_claim": "string" }} ] }},
+  "extracted_details": {{
+    "policy_details": {{ "nominee": "string", "policy_number": "string", "annual_premium": number, "policy_summary": "string", "coverage_amount": number, "policy_term_years": number }},
+    "validity_dates": {{ "from_date": "string", "to_date": "string" }},
+    "patient_details": {{ "age": number, "bmi": number, "gender": "string", "blood_pressure": "string", "medical_condition": "string", "contact_number": "string", "email": "string" }}
   }},
-
-  "premium_calculation": {{
-    "premium_output": [
-      {{
-        "sum_assured": number,
-        "base_premium": number,
-        "risk_loading_percent": number,
-        "final_premium": number
-      }}
-    ]
-  }},
-
-  "policy_information": {{
-    "policy_number": "string",
-    "policy_age_days": number,
-    "sum_insured": number,
-    "used_sum_insured": number,
-    "remaining_sum_insured": number,
-    "waiting_period_completed": true/false
-  }},
-
-  "claim_decision_engine": {{
-    "claim_eligibility": true/false,
-    "approved_amount": number,
-    "deductions": [{{"type": "string", "amount": number}}],
-    "final_payable_amount": number,
-    "decision": "string",
-    "confidence_score": number,
-    "manual_review_required": true/false,
-    "reason": "string"
-  }},
-
-  "claim_history": {{
-    "current_claim": {{
-      "claim_date": "string or None",
-      "amount_claimed": "string (e.g. Rs. 85000) or None",
-      "claim_type": "Cashless or Reimbursement or None",
-      "reason_for_claim": "string"
-    }},
-    "earlier_claims": [
-      {{
-        "claim_date": "string",
-        "amount_claimed": "string",
-        "claim_type": "string",
-        "reason_for_claim": "string"
-      }}
-    ]
-  }},
-
-  "final_calculation": "step-by-step formula",
   "base_premium_inr": number,
-  "risk_loading_percentage": number,
-  "risk_loading_amount": number,
-  "addons_amount": number,
   "tax_inr": number,
   "final_premium_inr": number,
-  "recommended_plan_tier": "string (e.g. Standard, Premium, Platinum)",
-  "ped_waiting_period_months": number,
-  "underwriting_narrative": "professional underwriting explanation",
-  "eligible_plans_and_covers": ["plan 1", "plan 2"]
+  "recommended_plan_tier": "string",
+  "underwriting_narrative": "string"
 }}
 
-========================
-KNOWLEDGE BASE CONTEXT (FOR NEW POLICIES)
-========================
-{kb_context}
-
-{"If this is a New Policy Application, you MUST use the KNOWLEDGE BASE CONTEXT above to select the best plan, calculate the 'base_premium_inr', calculate 'tax_inr' as 18% of (base + risk_loading), and set 'final_premium_inr'." if application_type == 'New Policy' else 'Leave premium fields as 0 if this is an Existing Claim.'}
+{"If this is a New Policy Application, use the KNOWLEDGE BASE CONTEXT above to select the best plan and calculate premiums." if application_type == 'New Policy' else 'Leave premium fields as 0 if this is an Existing Claim.'}
 
 ========================
 APPLICANT DATA ({application_type})
 ========================
-
 {context_summary[:15000]}
 """
-        MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
         from mistralai.models.chat_completion import ChatMessage
         response = client.chat(
             model=MISTRAL_MODEL,
@@ -456,109 +327,25 @@ def analyse_risk(case_id: int) -> dict:
     
     execute("UPDATE underwriting_cases SET company_name = %s, product_name = %s WHERE id = %s", (company_name, product_name, case_id))
     
-    python_extracted = extract_details_with_python(raw_text, policy_type)
+    python_extracted = extract_details_with_python(raw_text, policy_type, application_type)
     patient = python_extracted.get("patient_details", {})
 
     age = patient.get("age") or 25  
     bmi = patient.get("bmi") or 22.0
     disease = patient.get("medical_condition") or ""
-    smoking = patient.get("smoking") or "None"
-    claim_ratio = patient.get("claim_ratio") or 0.0
-    lifestyle = patient.get("lifestyle") or "Moderate"
-    raw_text_lower = raw_text.lower()
 
-    age_score = 0
-    if age > 60: age_score = 80
-    elif age >= 56: age_score = 70
-    elif age >= 41: age_score = 50
-    else: age_score = 0
-    
-    bmi_score = 0
-    if bmi >= 35: bmi_score = 70
-    elif bmi >= 30: bmi_score = 50
-    elif bmi >= 25: bmi_score = 20
-    elif bmi < 18.5: bmi_score = 15
-    else: bmi_score = 0
-    
-    disease_score = 0
-    if "cancer" in raw_text_lower: disease_score = 80
-    elif "heart" in raw_text_lower or "cardiac" in raw_text_lower: disease_score = 60
-    elif "diabetes" in raw_text_lower: disease_score = 30
-    elif "hypertension" in raw_text_lower or "bp" in raw_text_lower: disease_score = 25
-    
-    smoking_score = 0
-    if smoking == "Regular": smoking_score = 50
-    elif smoking == "Occasional": smoking_score = 20
-    
-    claim_score = 0
-    if "dengue" in raw_text_lower or "malaria" in raw_text_lower or claim_ratio > 0:
-        claim_score = 20 # 1 moderate claim
-    if claim_ratio > 1.0: claim_score = 40
-    
-    lifestyle_score = 0
-    if lifestyle == "Sedentary": lifestyle_score = 30
-    elif lifestyle == "Moderate": lifestyle_score = 15
-    elif lifestyle == "Active": lifestyle_score = 0
+    context_summary = raw_text[:20000]
 
-    final_score = (age_score * 0.25) + (bmi_score * 0.15) + (disease_score * 0.25) + (smoking_score * 0.15) + (claim_score * 0.10) + (lifestyle_score * 0.10)
-    final_score = round(final_score, 2)
-
-    rule_results = [
-        {"label": "Age", "score": age_score, "max_score": 100, "weight": 0.25},
-        {"label": "BMI", "score": bmi_score, "max_score": 100, "weight": 0.15},
-        {"label": "Disease History", "score": disease_score, "max_score": 100, "weight": 0.25},
-        {"label": "Smoking & Alcohol", "score": smoking_score, "max_score": 100, "weight": 0.15},
-        {"label": "Claim History", "score": claim_score, "max_score": 100, "weight": 0.10},
-        {"label": "Lifestyle", "score": lifestyle_score, "max_score": 100, "weight": 0.10}
-    ]
-
-    context_summary = raw_text[:3000]
-
-    kb_context_list = query_rulebook_context(query=f"Health insurance underwriting guidelines for disease {disease} age {age} BMI {bmi}", n_results=3)
+    if application_type == 'Existing Claim':
+        search_query = f"Hospitalization Cover, Day Care, Exclusions, and Limits for disease {disease}"
+    else:
+        search_query = f"Health insurance underwriting guidelines for disease {disease} age {age} BMI {bmi}"
+        
+    kb_context_list = query_rulebook_context(query=search_query, n_results=5)
     kb_context = "\n".join(kb_context_list) if kb_context_list else ""
 
-    llm_result = _call_llm(context_summary, rule_results, final_score, kb_context, application_type)
+    llm_result = _call_llm(context_summary, kb_context, application_type)
     
-    # Force LLM score to match deterministic score to prevent hallucination
-    llm_result["risk_score"] = final_score
-    
-    llm_breakdown = llm_result.get("breakdown", [])
-    if llm_breakdown:
-        # Update justifications only, keep deterministic scores
-        for r in rule_results:
-            match = next((b for b in llm_breakdown if b.get("factor", "").lower() in r["label"].lower() or r["label"].lower() in b.get("factor", "").lower()), None)
-            if match:
-                r["justification"] = match.get("justification", f"Deterministic logic applied. Score: {r['score']}")
-                r["matched_risk_signals"] = match.get("triggered_rules", [])
-                r["matched_positive_signals"] = []
-            else:
-                r["justification"] = f"Deterministic logic applied. Score: {r['score']}"
-                r["matched_risk_signals"] = []
-                r["matched_positive_signals"] = []
-    else:
-        justifications = llm_result.get("rule_justifications", {})
-        for r in rule_results:
-            r["justification"] = justifications.get(r["label"], f"Based on extracted value: {r['score']} points.")
-            r["matched_risk_signals"] = []
-            r["matched_positive_signals"] = []
-
-    # Product tier logic
-    stp_threshold = 30
-    refer_threshold = 50
-    tier = llm_result.get("recommended_plan_tier", product_type)
-    if tier and "Platinum" in tier:
-        stp_threshold = 45
-        refer_threshold = 60
-    elif tier and ("Premium" in tier or "Gold" in tier):
-        stp_threshold = 40
-        refer_threshold = 55
-    elif tier and "Standard" in tier:
-        stp_threshold = 30
-        refer_threshold = 50
-    elif tier and "Basic" in tier:
-        stp_threshold = 25
-        refer_threshold = 40
-
     fraud_detected = check_fraud_in_arango(case_id)
 
     if fraud_detected:
@@ -567,9 +354,9 @@ def analyse_risk(case_id: int) -> dict:
         human_review_required = True
         recommendation = "Fraud Suspicion - Referred to Investigation"
     else:
-        risk_level = llm_result.get("risk_level", "LOW")
-        decision = llm_result.get("decision", "Approve Standard Terms")
-        human_review_required = risk_level in ["HIGH", "CRITICAL", "MEDIUM"]
+        risk_level = str(llm_result.get("risk_level", "UNKNOWN"))[:20]
+        decision = llm_result.get("decision", "Manual Review Required - Missing Knowledge Base Guidelines")
+        human_review_required = risk_level in ["HIGH", "CRITICAL", "MEDIUM", "UNKNOWN"]
         recommendation = decision
 
     # Programmatic Confidence Score Calculation
@@ -620,10 +407,21 @@ def analyse_risk(case_id: int) -> dict:
         }
     }
 
+    try:
+        if llm_result.get("breakdown"):
+            calculated_score = sum(float(b.get("weighted_score", 0)) for b in llm_result.get("breakdown", []))
+            llm_risk_score = min(100, max(0, int(round(calculated_score))))
+        else:
+            llm_risk_score = int(llm_result.get("risk_score", 0))
+    except (ValueError, TypeError):
+        llm_risk_score = 0
+        
+    llm_breakdown = llm_result.get("breakdown", [])
+
     out = {
-        "risk_score": final_score,
-        "deterministic_score": final_score,
-        "llm_score": final_score,
+        "risk_score": llm_risk_score,
+        "deterministic_score": llm_risk_score,
+        "llm_score": llm_risk_score,
         "risk_level": risk_level,
         "recommendation": recommendation,
         "approval_confidence": ai_confidence,
@@ -659,9 +457,9 @@ def analyse_risk(case_id: int) -> dict:
         "claim_decision_engine": llm_result.get("claim_decision_engine", {}),
         "human_review_required": human_review_required,
         "recommended_action": recommendation,
-        "rules_passed": sum(1 for r in rule_results if r["score"] <= (r["max_score"] * 0.4)), 
-        "rules_total": len(rule_results),
-        "breakdown": rule_results,
+        "rules_passed": len(llm_breakdown), 
+        "rules_total": len(llm_breakdown),
+        "breakdown": llm_breakdown,
         "ai_narrative": llm_result.get("underwriting_narrative", ""),
         "ai_confidence": ai_confidence,
         "ai_flags": llm_result.get("negative_signals", []),

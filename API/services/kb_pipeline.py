@@ -13,12 +13,12 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-ARANGO_HOST     = os.getenv("ARANGO_HOST", "https://a71fd1666bd9.arangodb.cloud:8529")
-ARANGO_DB       = os.getenv("ARANGO_DB", "underwriting_db")
-ARANGO_USERNAME = os.getenv("ARANGO_USERNAME", "root")
-ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD", "TnHBO0Y4FwKptmr6GxrL")
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_MODEL   = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+ARANGO_HOST     = os.getenv("ARANGO_URL")
+ARANGO_DB       = os.getenv("ARANGO_DB")
+ARANGO_USERNAME = os.getenv("ARANGO_USER")
+ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+MISTRAL_MODEL   = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
 
 RELEVANCE_THRESHOLD = 75   # Documents below this score are rejected
 
@@ -402,7 +402,7 @@ class KnowledgeBasePipeline:
         try:
             from mistralai.client import MistralClient
             from mistralai.models.chat_completion import ChatMessage
-            client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300)
+            client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
             response = client.chat(
                 model=MISTRAL_MODEL,
                 messages=[ChatMessage(role="user", content=prompt)],

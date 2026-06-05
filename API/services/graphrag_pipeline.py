@@ -14,13 +14,13 @@ from services.vector_store import chroma_client
 from services.ocr_service import extract_text
 
 # Load environment variables
-ARANGO_HOST = os.getenv("ARANGO_HOST", "https://a71fd1666bd9.arangodb.cloud:8529")
-ARANGO_DB = os.getenv("ARANGO_DB", "underwriting_db")
-ARANGO_USERNAME = os.getenv("ARANGO_USERNAME", "root")
-ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD", "TnHBO0Y4FwKptmr6GxrL")
+ARANGO_HOST = os.getenv("ARANGO_URL")
+ARANGO_DB = os.getenv("ARANGO_DB")
+ARANGO_USERNAME = os.getenv("ARANGO_USER")
+ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD")
 
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
 
 class GraphRagPipeline:
     def __init__(self):
@@ -77,7 +77,7 @@ class GraphRagPipeline:
             from mistralai.client import MistralClient
             from mistralai.models.chat_completion import ChatMessage
             
-            client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300)
+            client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
             response = client.chat(
                 model=MISTRAL_MODEL,
                 messages=[ChatMessage(role="user", content=prompt)],
@@ -145,7 +145,14 @@ DOCUMENT CONTENT:
         graph_data = {"nodes": [], "edges": []}
         try:
             # Clean possible markdown wrappers if LLM returned them
-            cleaned_json = re.sub(r'^```json\s*|\s*```$', '', graph_json_str.strip())
+            cleaned_json = graph_json_str.strip()
+            if cleaned_json.startswith("```"):
+                cleaned_json = cleaned_json.split("\n", 1)[-1]
+            if cleaned_json.endswith("```"):
+                cleaned_json = cleaned_json.rsplit("\n", 1)[0]
+            if cleaned_json.startswith("json"):
+                cleaned_json = cleaned_json[4:].strip()
+            
             graph_data = json.loads(cleaned_json)
         except Exception as json_err:
             print(f"[GraphRAG Pipeline] JSON parsing failed: {json_err}. Using empty graph.")
