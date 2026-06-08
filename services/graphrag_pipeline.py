@@ -77,7 +77,10 @@ class GraphRagPipeline:
             from mistralai.client import MistralClient
             from mistralai.models.chat_completion import ChatMessage
             
-            client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
+            kwargs = {"api_key": MISTRAL_API_KEY, "timeout": 300}
+            if os.getenv("MISTRAL_MODE") == "Local":
+                kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
+            client = MistralClient(**kwargs)
             response = client.chat(
                 model=MISTRAL_MODEL,
                 messages=[ChatMessage(role="user", content=prompt)],

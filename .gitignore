@@ -5,7 +5,10 @@ __pycache__
 .env.local
 .zip
 /chroma_db
-/graphs
+/static_graphs
 /policies
 *.pdf
 API/chroma_db/
+chroma_store
+/upload
+

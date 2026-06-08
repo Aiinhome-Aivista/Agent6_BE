@@ -8,6 +8,7 @@ def extract_text(file_path: str) -> str:
     if ext == ".pdf":
         try:
             # Try using PyMuPDF (fitz) first as it is much better at extracting text
+            # pyrefly: ignore [missing-import]
             import fitz
             with fitz.open(file_path) as doc:
                 for page in doc:
@@ -15,6 +16,7 @@ def extract_text(file_path: str) -> str:
         except ImportError:
             print("PyMuPDF not found. Falling back to PyPDF2...")
             try:
+                # pyrefly: ignore [missing-import]
                 import PyPDF2
                 with open(file_path, "rb") as f:
                     reader = PyPDF2.PdfReader(f)
@@ -34,5 +36,10 @@ def extract_text(file_path: str) -> str:
     # If PDF is completely empty (scanned image inside PDF), provide a fallback so the app doesn't break
     if not text.strip():
         text = "No readable text found in document. Simulated text fallback applied for workflow continuity: Patient healthy, W2 salary $95,000."
+        
+    import re
+    # Fix common OCR/PDF extraction error where Rupee symbol (₹) is extracted as 'I'
+    # e.g., 'I5,00,000' -> '₹5,00,000', '(I78,500)' -> '(₹78,500)'
+    text = re.sub(r'(^|\s|\()I(\d{1,3}(?:,\d{2,3})*(?:\.\d+)?)', r'\1₹\2', text)
         
     return text.strip()

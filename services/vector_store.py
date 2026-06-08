@@ -115,7 +115,7 @@ def query_rulebook_context(query: str, n_results: int = 5, company_name: str = N
     """
     try:
         dyn_rulebook_collection = chroma_client.get_or_create_collection(
-            name="underwriting_rulebooks",
+            name="knowledge_base",
             embedding_function=ef,
             metadata={"hnsw:space": "cosine"}
         )

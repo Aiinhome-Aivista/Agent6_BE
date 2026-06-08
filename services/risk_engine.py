@@ -141,7 +141,10 @@ def detect_target_policy(raw_text: str) -> dict:
     try:
         from mistralai.client import MistralClient
         from mistralai.models.chat_completion import ChatMessage
-        client = MistralClient(api_key=api_key, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
+        kwargs = {"api_key": api_key}
+        if os.getenv("MISTRAL_MODE") == "Local":
+            kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
+        client = MistralClient(**kwargs)
         prompt = f"Extract the target Insurance Company Name and Product/Policy Name from the applicant's text. Return ONLY a JSON object with 'company_name' and 'product_name'. If not explicitly mentioned, return null for that field.\n\nTEXT: {raw_text[:10000]}"
         MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
         resp = client.chat(
@@ -198,34 +201,44 @@ def _call_llm(context_summary: str, kb_context: str = "", application_type: str 
 
     try:
         from mistralai.client import MistralClient
-        client = MistralClient(api_key=MISTRAL_API_KEY, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
+        kwargs = {"api_key": MISTRAL_API_KEY}
+        if os.getenv("MISTRAL_MODE") == "Local":
+            kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
+        client = MistralClient(**kwargs)
 
         prompt_logic = ""
         if application_type == "New Policy":
             prompt_logic = """
-You must follow these 8 STEPS for New Applicants:
-1. Identity Verification: Validate applicant demographics.
-2. Medical History Analysis: Check for pre-existing diseases.
-3. BMI & Vitals Check: Evaluate health metrics.
-4. Rulebook Mapping: Map conditions strictly to the KNOWLEDGE BASE CONTEXT.
-5. Base Premium Calculation: Determine base premium.
-6. Loading/Discount Calculation: Apply risk loadings or discounts.
-7. Waiting Period Assignment: Assign PED waiting periods.
-8. Final Decision: Synthesize findings into a final risk score and decision.
+--- AGENT 4: RISK ANALYSIS AGENT ---
+1. Evaluate the applicant against the Rulebook.
+2. Calculate a Risk Score from 1 to 100 (Higher = Riskier).
+3. Identify exactly which rule was triggered.
+
+--- AGENT 5: PRICING AGENT ---
+4. Base Premium = $1000 (equivalent to ₹83,000 INR).
+5. If Risk Score < 30: Apply 10% discount.
+6. If Risk Score 30-70: Standard base premium.
+7. If Risk Score > 70: Apply 25% loaded premium.
+
+--- AGENT 6: DECISION AGENT (STP) ---
+8. Rules for STP Auto-Approval:
+   - Risk Score < 40
+   - 0 Fraud Flags
+   - 0 Missing Docs
+9. If any rule fails, decision MUST be "Refer to Underwriter". If hard rules fail (e.g., Terminal Illness), decision MUST be "Decline".
 """
         else:
             prompt_logic = """
-You must follow these 10 STEPS for Existing Claims:
-1. Claim Triage: Identify the claim type.
-2. Identity Verification: Validate claimant details.
-3. Policy Validity Check: Ensure policy was active.
-4. Medical History Analysis: Evaluate past conditions.
-5. Rulebook Mapping: Map conditions strictly to the KNOWLEDGE BASE CONTEXT.
-6. Exclusions Check: Check for policy exclusions.
-7. Claim Adjudication: Determine eligibility.
-8. Deductions Calculation: Calculate non-payable amounts.
-9. Payout Calculation: Calculate final payable amount.
-10. Final Decision: Synthesize findings into a final risk score and decision.
+--- AGENT 4: RISK ANALYSIS AGENT ---
+1. Evaluate the claimant against the Rulebook (Exclusions & Eligibility).
+2. Calculate a Risk Score from 1 to 100 (Higher = Riskier) based on claim anomalies.
+
+--- AGENT 5: PRICING / PAYOUT AGENT ---
+3. Deductions Calculation: Calculate non-payable amounts.
+4. Payout Calculation: Calculate final payable amount.
+
+--- AGENT 6: DECISION AGENT (STP) ---
+5. Determine if claim qualifies for auto-approval. If anomalies exist, "Refer to Underwriter".
 """
 
         prompt = f"""You are a Senior Enterprise Health Insurance Underwriting AI Engine.
@@ -383,27 +396,27 @@ def analyse_risk(case_id: int) -> dict:
 
     safe_extracted_details = {
         "patient_details": {
-            "age": patient.get("age") or (patient_details.get("age") if isinstance(patient_details, dict) else None),
-            "gender": patient.get("gender") or (patient_details.get("gender") if isinstance(patient_details, dict) else None),
-            "occupation": patient.get("occupation") or (patient_details.get("occupation") if isinstance(patient_details, dict) else None),
-            "marital_status": patient.get("marital_status") or (patient_details.get("marital_status") if isinstance(patient_details, dict) else None),
-            "contact_number": patient.get("contact_number") or (patient_details.get("contact_number") if isinstance(patient_details, dict) else None),
-            "email": patient.get("email") or (patient_details.get("email") if isinstance(patient_details, dict) else None),
-            "medical_condition": patient.get("medical_condition") or (patient_details.get("medical_condition") if isinstance(patient_details, dict) else None),
-            "bmi": patient.get("bmi") or (patient_details.get("bmi") if isinstance(patient_details, dict) else None),
-            "blood_pressure": patient.get("blood_pressure") or (patient_details.get("blood_pressure") if isinstance(patient_details, dict) else None)
+            "age": (patient_details.get("age") if isinstance(patient_details, dict) else None) or patient.get("age"),
+            "gender": (patient_details.get("gender") if isinstance(patient_details, dict) else None) or patient.get("gender"),
+            "occupation": (patient_details.get("occupation") if isinstance(patient_details, dict) else None) or patient.get("occupation"),
+            "marital_status": (patient_details.get("marital_status") if isinstance(patient_details, dict) else None) or patient.get("marital_status"),
+            "contact_number": (patient_details.get("contact_number") if isinstance(patient_details, dict) else None) or patient.get("contact_number"),
+            "email": (patient_details.get("email") if isinstance(patient_details, dict) else None) or patient.get("email"),
+            "medical_condition": (patient_details.get("medical_condition") if isinstance(patient_details, dict) else None) or patient.get("medical_condition"),
+            "bmi": (patient_details.get("bmi") if isinstance(patient_details, dict) else None) or patient.get("bmi"),
+            "blood_pressure": (patient_details.get("blood_pressure") if isinstance(patient_details, dict) else None) or patient.get("blood_pressure")
         },
         "policy_details": {
-            "policy_number": python_extracted.get("policy_details", {}).get("policy_number") or (policy_details.get("policy_number") if isinstance(policy_details, dict) else None),
-            "policy_summary": python_extracted.get("policy_details", {}).get("policy_summary") or (policy_details.get("policy_summary") if isinstance(policy_details, dict) else None),
-            "coverage_amount": python_extracted.get("policy_details", {}).get("coverage_amount") or (policy_details.get("coverage_amount") if isinstance(policy_details, dict) else None),
-            "annual_premium": python_extracted.get("policy_details", {}).get("annual_premium") or (policy_details.get("annual_premium") if isinstance(policy_details, dict) else None),
-            "policy_term_years": python_extracted.get("policy_details", {}).get("policy_term_years") or (policy_details.get("policy_term_years") if isinstance(policy_details, dict) else None),
-            "nominee": python_extracted.get("policy_details", {}).get("nominee") or (policy_details.get("nominee") if isinstance(policy_details, dict) else None)
+            "policy_number": (policy_details.get("policy_number") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("policy_number"),
+            "policy_summary": (policy_details.get("policy_summary") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("policy_summary"),
+            "coverage_amount": (policy_details.get("coverage_amount") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("coverage_amount"),
+            "annual_premium": (policy_details.get("annual_premium") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("annual_premium"),
+            "policy_term_years": (policy_details.get("policy_term_years") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("policy_term_years"),
+            "nominee": (policy_details.get("nominee") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("nominee")
         },
         "validity_dates": {
-            "from_date": python_extracted.get("validity_dates", {}).get("from_date") or (validity_dates.get("from_date") if isinstance(validity_dates, dict) else None),
-            "to_date": python_extracted.get("validity_dates", {}).get("to_date") or (validity_dates.get("to_date") if isinstance(validity_dates, dict) else None)
+            "from_date": (validity_dates.get("from_date") if isinstance(validity_dates, dict) else None) or python_extracted.get("validity_dates", {}).get("from_date"),
+            "to_date": (validity_dates.get("to_date") if isinstance(validity_dates, dict) else None) or python_extracted.get("validity_dates", {}).get("to_date")
         }
     }
 

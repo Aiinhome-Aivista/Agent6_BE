@@ -186,154 +186,12 @@ async def check_documents(
             except:
                 pass
                 
-    # Call Mistral
-    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-    MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
-    
-    if not MISTRAL_API_KEY or MISTRAL_API_KEY == "your_mistral_key_here":
-        return {"missing": []}
-        
+    # Call Validator Agent
     try:
-        from mistralai.client import MistralClient
-        from mistralai.models.chat_completion import ChatMessage
-        
-        if application_type == "New Policy":
-            docs_requirements = """
-━━━━━━━━━━━━━━━━━━━━━━━
-REQUIRED HEALTH INSURANCE DOCUMENTS (NEW POLICY APPLICATION)
-━━━━━━━━━━━━━━━━━━━━━━━
-
-Mandatory documents:
-1. Identity Proof (Aadhaar Card, PAN Card, or Passport)
-2. Bank Statement
-3. Medical Reports / Health Checkup (if applicable)
-
-DO NOT ask for Claim Form, Hospital Bills, or Discharge Summary for New Policy Applications.
-"""
-        else:
-            docs_requirements = """
-━━━━━━━━━━━━━━━━━━━━━━━
-REQUIRED HEALTH INSURANCE DOCUMENTS (EXISTING CLAIM)
-━━━━━━━━━━━━━━━━━━━━━━━
-
-Mandatory documents:
-1. Claim Form
-2. Hospital Bills
-3. Prescriptions
-4. Identity Proof
-   - Aadhaar Card
-   - PAN Card
-   - Passport
-5. Discharge Summary
-6. Policy Document
-7. Additional Documents (optional)
-"""
-
-        prompt = f"""You are an Enterprise Insurance Underwriting AI Assistant for a Health Insurance platform.
-
-Your task is to intelligently validate uploaded customer supporting documents during claim or underwriting submission.
-
-A Broker uploads multiple documents for a customer case ({application_type}).  
-You must analyze ALL uploaded files using OCR/text extraction + semantic understanding and determine whether the required documents are present or missing.
-{docs_requirements}
-━━━━━━━━━━━━━━━━━━━━━━━
-YOUR RESPONSIBILITIES
-━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Read and analyze uploaded documents intelligently.
-2. Detect document type using semantic understanding, not filename only.
-3. Handle OCR mistakes, blurry scans, mixed pages, handwritten text, and partial uploads.
-4. Match similar medical/insurance terminology intelligently.
-5. Return precise validation results.
-6. Detect missing mandatory documents.
-7. Detect duplicate uploads.
-8. Detect wrong document category uploads.
-9. Detect corrupted/empty documents if possible.
-10. Produce enterprise-grade structured JSON output.
-
-━━━━━━━━━━━━━━━━━━━━━━━
-VALIDATION RULES
-━━━━━━━━━━━━━━━━━━━━━━━
-
-- Claim Form must contain insurance claim related fields.
-- Hospital Bills must contain billing/payment/charges/hospital invoice information.
-- Prescriptions must contain medicine names, doctor instructions, diagnosis, or Rx patterns.
-- Identity Proof must contain government-issued identity information.
-- Discharge Summary must contain admission/discharge/treatment summary information.
-- Policy Document must contain insurance policy details, sum insured, policy period, etc.
-- Additional documents are optional and should not trigger validation errors.
-
-━━━━━━━━━━━━━━━━━━━━━━━
-IMPORTANT LOGIC
-━━━━━━━━━━━━━━━━━━━━━━━
-
-- Do NOT rely only on filenames.
-- Use OCR text + semantic context.
-- One PDF may contain multiple document types.
-- Multiple files may together satisfy one requirement.
-- Ignore irrelevant pages intelligently.
-- If confidence is low, mark status as "uncertain".
-
-━━━━━━━━━━━━━━━━━━━━━━━
-RETURN FORMAT (STRICT JSON)
-━━━━━━━━━━━━━━━━━━━━━━━
-
-{{
-  "validation_status": "success | failed | partial",
-  "missing_documents": [
-    "Identity Proof",
-    "Hospital Bills"
-  ],
-  "detected_documents": [
-    {{
-      "document_type": "Prescription",
-      "file_name": "doc1.pdf",
-      "confidence": 0.94,
-      "pages": [1,2]
-    }}
-  ],
-  "duplicate_documents": [],
-  "invalid_documents": [],
-  "warnings": [],
-  "summary": "Prescription and claim form detected successfully but hospital bills and identity proof are missing."
-}}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-UPLOADED DOCUMENT TEXT
-━━━━━━━━━━━━━━━━━━━━━━━
-{combined_text}
-
-Respond ONLY with the JSON object. Do not include any other text or markdown formatting.
-"""
-
-        client = MistralClient(api_key=MISTRAL_API_KEY, timeout=60, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
-        response = client.chat(
-            model=MISTRAL_MODEL,
-            messages=[ChatMessage(role="user", content=prompt)],
-            temperature=0.1
-        )
-        reply = response.choices[0].message.content.strip()
-        if reply.startswith("```json"):
-            reply = reply.replace("```json", "", 1)
-            if reply.endswith("```"):
-                reply = reply[:-3]
-            reply = reply.strip()
-        elif reply.startswith("```"):
-            reply = reply.replace("```", "", 1)
-            if reply.endswith("```"):
-                reply = reply[:-3]
-            reply = reply.strip()
-            
-        try:
-            parsed_result = json.loads(reply)
-            missing_docs = parsed_result.get("missing_documents", [])
-            if not isinstance(missing_docs, list):
-                missing_docs = []
-            return {"missing": missing_docs, "raw_validation": parsed_result}
-        except json.JSONDecodeError:
-            print(f"Failed to parse JSON: {reply}")
-            return {"missing": [], "error": "Failed to parse LLM response"}
-        
+        from services.validator import validator
+        import asyncio
+        result = await validator.validate_documents(combined_text, application_type)
+        return result
     except Exception as e:
         print(f"[LLM DOC CHECK ERROR] {e}")
         return {"missing": []}
@@ -380,7 +238,8 @@ async def upload_documents(case_id: int, files: list[UploadFile] = File(...), cu
             continue
 
         safe_name = "".join([c if c.isalnum() else "_" for c in applicant_name])
-        unique_name = f"{safe_name}_case_{case_id}_{uuid.uuid4().hex[:6]}{ext}"
+        original_slug = "".join([c if c.isalnum() else "_" for c in os.path.splitext(file.filename)[0]])
+        unique_name = f"c{case_id}_{original_slug}_{uuid.uuid4().hex[:4]}{ext}"
         file_path = os.path.join(upload_dir, unique_name)
 
         try:
@@ -440,10 +299,12 @@ async def upload_documents(case_id: int, files: list[UploadFile] = File(...), cu
             detail=error_str
         )
 
-    # ONE consolidated risk analysis across all documents for this case
+    # ONE consolidated pipeline via Agent 1 (Orchestrator)
     try:
-        risk_result = analyse_risk(case_id=case_id)
-        print(f"[RISK] Case {case_id}: score={risk_result['risk_score']}, level={risk_result['risk_level']}")
+        from services.orchestrator import orchestrator
+        import asyncio
+        risk_result = await orchestrator.process_new_application(case_id=case_id, files=files)
+        print(f"[Orchestrator] Case {case_id}: score={risk_result.get('risk_score')}, level={risk_result.get('risk_level')}")
 
         execute("DELETE FROM risk_assessments WHERE case_id = %s", (case_id,))
         execute(
@@ -572,7 +433,10 @@ Chat History:
         from mistralai.client import MistralClient
         from mistralai.models.chat_completion import ChatMessage
         
-        client = MistralClient(api_key=MISTRAL_API_KEY, timeout=300, endpoint=os.getenv("MISTRAL_LOCAL_URL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_API_URL"))
+        kwargs = {"api_key": MISTRAL_API_KEY, "timeout": 300}
+        if os.getenv("MISTRAL_MODE") == "Local":
+            kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
+        client = MistralClient(**kwargs)
         response = client.chat(
             model=MISTRAL_MODEL,
             messages=[ChatMessage(role="user", content=prompt)],
