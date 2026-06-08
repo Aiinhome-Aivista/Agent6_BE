@@ -324,6 +324,10 @@ def analyse_risk(case_id: int) -> dict:
     docs = fetch_all("SELECT raw_text FROM ocr_extracted_data oed JOIN documents d ON oed.document_id = d.id WHERE d.case_id = %s", (case_id,))
     raw_text = " ".join([doc["raw_text"] for doc in docs]) if docs else ""
     
+    # Fix OCR artifact 'I' before numbers (e.g., 'I5,00,000' -> '5,00,000')
+    import re
+    raw_text = re.sub(r'(?<![a-zA-Z])I(\d{1,3}(?:,\d{2,3})*(?:\.\d+)?)', r'\1', raw_text)
+    
     case_rec = fetch_all("""
         SELECT uc.policy_type, pt.product_name AS product_type, uc.existing_policy_details, uc.requested_coverage, uc.application_type 
         FROM underwriting_cases uc 

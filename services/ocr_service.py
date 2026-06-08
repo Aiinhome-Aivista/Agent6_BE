@@ -39,7 +39,7 @@ def extract_text(file_path: str) -> str:
         
     import re
     # Fix common OCR/PDF extraction error where Rupee symbol (₹) is extracted as 'I'
-    # e.g., 'I5,00,000' -> '₹5,00,000', '(I78,500)' -> '(₹78,500)'
-    text = re.sub(r'(^|\s|\()I(\d{1,3}(?:,\d{2,3})*(?:\.\d+)?)', r'\1₹\2', text)
+    # e.g., 'I5,00,000' -> '5,00,000', '(I78,500)' -> '(78,500)'
+    text = re.sub(r'(?<![a-zA-Z])I(\d{1,3}(?:,\d{2,3})*(?:\.\d+)?)', r'\1', text)
         
     return text.strip()
