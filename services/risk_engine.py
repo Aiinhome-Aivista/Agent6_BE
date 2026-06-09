@@ -269,7 +269,7 @@ Return ONLY JSON:
       "weighted_score": "number (must be exactly: raw_score * weight / 100)",
       "justification": "Explanation based strictly on KB",
       "triggered_rules": ["Quote the rule from KB"],
-      "citations": ["List of SOURCE DOCUMENT names that prove this factor"]
+      "citations": ["Extract the exact SOURCE DOCUMENT filenames from the text that support this factor. If none, return empty array []"]
     }}
   ],
   "explainability": {{
