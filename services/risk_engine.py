@@ -268,7 +268,8 @@ Return ONLY JSON:
       "weight": "number (the maximum points this factor contributes to the total 100 score, e.g., 30)",
       "weighted_score": "number (must be exactly: raw_score * weight / 100)",
       "justification": "Explanation based strictly on KB",
-      "triggered_rules": ["Quote the rule from KB"]
+      "triggered_rules": ["Quote the rule from KB"],
+      "citations": ["List of SOURCE DOCUMENT names that prove this factor"]
     }}
   ],
   "explainability": {{
@@ -321,8 +322,8 @@ def analyse_risk(case_id: int) -> dict:
     from database.connection import fetch_all, execute
     import re
 
-    docs = fetch_all("SELECT raw_text FROM ocr_extracted_data oed JOIN documents d ON oed.document_id = d.id WHERE d.case_id = %s", (case_id,))
-    raw_text = " ".join([doc["raw_text"] for doc in docs]) if docs else ""
+    docs = fetch_all("SELECT d.file_name, oed.raw_text FROM ocr_extracted_data oed JOIN documents d ON oed.document_id = d.id WHERE d.case_id = %s", (case_id,))
+    raw_text = "\n\n".join([f"--- SOURCE DOCUMENT: {doc['file_name']} ---\n{doc['raw_text']}" for doc in docs]) if docs else ""
     
     # Fix OCR artifact 'I' before numbers (e.g., 'I5,00,000' -> '5,00,000')
     import re

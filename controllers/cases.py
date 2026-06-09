@@ -129,8 +129,20 @@ async def get_cases(current_user: dict = Depends(get_current_user)):
              FROM underwriting_cases uc 
              LEFT JOIN case_statuses cs ON uc.status_id = cs.id
              LEFT JOIN product_types pt ON uc.product_type_id = pt.id
-             ORDER BY uc.created_at DESC"""
-    params = ()
+             WHERE (cs.status_name IS NULL OR cs.status_name NOT IN ('Approved', 'Rejected'))"""
+    
+    params = []
+    
+    if role_id == 5:
+        # Brokers see only their own cases
+        sql += " AND uc.user_id = %s"
+        params.append(user_id)
+    elif role_id in [3, 4]:
+        # Underwriters and Managers see unassigned cases or cases specifically assigned to them
+        sql += " AND (uc.assigned_to IS NULL OR uc.assigned_to = %s)"
+        params.append(user_id)
+
+    sql += " ORDER BY uc.created_at DESC"
 
     try:
         return fetch_all(sql, params)

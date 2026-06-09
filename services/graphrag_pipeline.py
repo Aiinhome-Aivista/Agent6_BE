@@ -108,8 +108,10 @@ class GraphRagPipeline:
         # Step 2: Generate Raw Summary via LLM
         print(f"[GraphRAG Pipeline] Generating raw summary for case {case_id}...")
         prompt_summary = f"""You are an Expert Health Underwriting Assistant.
-Please review this clinical case / medical report and provide a detailed raw summary.
-Highlight patient parameters, symptoms, chronic illnesses, diagnostic measurements, and treatments.
+Please review the following extracted text from an uploaded document.
+Provide a detailed raw summary of the document. 
+CRITICAL: If the document is a medical report, highlight patient parameters, symptoms, chronic illnesses, diagnostic measurements, and treatments. 
+If the document is an Identity Proof (like Aadhaar or PAN) or a Bank Statement, simply state its type and key details (like name, age, ID number, or balance) WITHOUT hallucinating or inventing any medical data. Do not make up blood pressure, BMI, or illnesses if they are not explicitly present in the text.
 
 DOCUMENT CONTENT:
 {raw_text[:12000]}
@@ -210,7 +212,9 @@ DOCUMENT CONTENT:
         chunk_size = 1000
         chunks = [combined_text[i:i+chunk_size] for i in range(0, len(combined_text), chunk_size)]
         
-        ids = [f"case_{case_id}_chunk_{i}" for i in range(len(chunks))]
+        import uuid
+        doc_uuid = uuid.uuid4().hex[:6]
+        ids = [f"case_{case_id}_{doc_uuid}_chunk_{i}" for i in range(len(chunks))]
         metas = [{"case_id": str(case_id), "file_name": file_name, "type": "consolidated", "chunk": i} for i in range(len(chunks))]
         
         self.collection.upsert(
@@ -238,7 +242,7 @@ DOCUMENT CONTENT:
             )
             
         if relationship_sentences:
-            rel_ids = [f"case_{case_id}_rel_{idx}" for idx in range(len(relationship_sentences))]
+            rel_ids = [f"case_{case_id}_{doc_uuid}_rel_{idx}" for idx in range(len(relationship_sentences))]
             rel_metas = [{"case_id": str(case_id), "file_name": file_name, "type": "relationship", "idx": idx} for idx in range(len(relationship_sentences))]
             self.collection.upsert(
                 documents=relationship_sentences,

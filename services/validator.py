@@ -27,9 +27,8 @@ class DocumentValidator:
                 docs_requirements = """
 Mandatory documents for New Policy Application:
 1. Identity Proof (Aadhaar Card OR PAN Card)
-2. Medical Reports
+2. Medical Reports / Pre-Policy Medical Checkup Report
 3. Bank Statement
-4. Previous Claim History
 """
             else:
                 docs_requirements = """
@@ -47,7 +46,7 @@ Validate the following documents against the STRICT requirements.
 {docs_requirements}
 
 TEXT EXTRACTED FROM UPLOADS:
-{combined_text[:5000]}
+{combined_text[:30000]}
 
 CRITICAL INSTRUCTION: You MUST cross-check every single mandatory document from the list above against the extracted text. If a mandatory document (like Bank Statement or Claim Form) is NOT found in the text, you MUST include it in the "missing_documents" array. DO NOT skip any mandatory document. If the list contains 2 items and you only find 1, the other MUST be in "missing_documents" and validation_status MUST be "failed".
 
