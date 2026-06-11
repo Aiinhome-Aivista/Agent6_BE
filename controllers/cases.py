@@ -835,16 +835,51 @@ async def get_case_timeline(case_id: int, current_user: dict = Depends(get_curre
            ORDER BY d.created_at ASC""",
         (case_id,)
     )
-    for doc in docs:
-        events.append({
-            "event_type": "document_uploaded",
-            "title": "Document Uploaded",
-            "description": doc["file_name"],
-            "actor": doc["actor"] or "Broker",
-            "actor_role": "Broker",
-            "timestamp": str(doc["created_at"]),
-            "icon": "upload_file"
-        })
+    if docs:
+        import datetime
+        grouped_docs = []
+        current_group = {
+            "files": [docs[0]["file_name"]], 
+            "actor": docs[0]["actor"], 
+            "timestamp": docs[0]["created_at"]
+        }
+        
+        for doc in docs[1:]:
+            t1 = doc["created_at"]
+            t2 = current_group["timestamp"]
+            
+            if isinstance(t1, datetime.datetime) and isinstance(t2, datetime.datetime):
+                diff = abs((t1 - t2).total_seconds())
+            else:
+                diff = 0 if str(t1)[:16] == str(t2)[:16] else 999
+                
+            if diff < 300 and doc["actor"] == current_group["actor"]:
+                current_group["files"].append(doc["file_name"])
+            else:
+                grouped_docs.append(current_group)
+                current_group = {
+                    "files": [doc["file_name"]], 
+                    "actor": doc["actor"], 
+                    "timestamp": doc["created_at"]
+                }
+        grouped_docs.append(current_group)
+
+        for g in grouped_docs:
+            file_count = len(g["files"])
+            if file_count <= 2:
+                desc = ", ".join(g["files"])
+            else:
+                desc = f"{file_count} documents uploaded"
+                
+            events.append({
+                "event_type": "document_uploaded",
+                "title": "Documents Uploaded" if file_count > 1 else "Document Uploaded",
+                "description": desc,
+                "actor": g["actor"] or "Broker",
+                "actor_role": "Broker",
+                "timestamp": str(g["timestamp"]),
+                "icon": "upload_file"
+            })
 
     # 3. Risk assessments
     risks = fetch_all(
