@@ -23,23 +23,12 @@ class DocumentValidator:
             from mistralai.client import MistralClient
             from mistralai.models.chat_completion import ChatMessage
             
-            if application_type == "New Policy":
-                docs_requirements = """
-Mandatory documents for New Policy Application:
+            docs_requirements = """
+Mandatory documents for Application:
 1. Identity Proof (Aadhaar Card OR PAN Card)
-2. Medical Reports / Pre-Policy Medical Checkup Report
+2. Medical Reports
 3. Bank Statement
-"""
-            else:
-                docs_requirements = """
-Mandatory documents for Existing Claim / Existing Policy:
-1. Identity Proof (Aadhaar Card OR PAN Card)
-2. Policy Document / Existing Policy PDF
-3. Claim Form
-4. Hospital Bills
-5. Discharge Summary
-6. Medical Reports / Prescriptions
-7. Previous Claim History
+
 """
             prompt = f"""You are an Enterprise Insurance Underwriting AI Assistant.
 Validate the following documents against the STRICT requirements.

@@ -713,3 +713,283 @@ Policy Data (from Broker API): {simulated_policy_data}
         import traceback
         print(f"[ENRICH_CONTEXT ERROR] {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HISTORICAL CASES
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/historical")
+async def get_historical_cases(
+    search: str = "",
+    status: str = "",
+    policy_type: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    current_user: dict = Depends(get_current_user)
+):
+    """Returns completed (Approved / Rejected) cases with optional filters."""
+    role_id = current_user["role_id"]
+    user_id = current_user["user_id"]
+
+    sql = """
+        SELECT
+            uc.id, uc.case_number, uc.applicant_name, uc.policy_type,
+            uc.application_type,
+            pt.product_name AS product_type,
+            uc.requested_coverage, cs.status_name AS status,
+            uc.priority, uc.sla_due_at, uc.created_at,
+            uc.underwriter_remarks, uc.rejection_reason,
+            uc.user_id, uc.assigned_to,
+            COALESCE(u_broker.full_name, u_broker.username) AS broker_name,
+            COALESCE(u_uw.full_name, u_uw.username)     AS assigned_user,
+            ra.risk_score, ra.risk_level, ra.confidence_score
+        FROM underwriting_cases uc
+        LEFT JOIN case_statuses cs   ON uc.status_id        = cs.id
+        LEFT JOIN product_types pt   ON uc.product_type_id  = pt.id
+        LEFT JOIN users u_broker     ON uc.user_id           = u_broker.id
+        LEFT JOIN users u_uw         ON uc.assigned_to       = u_uw.id
+        LEFT JOIN risk_assessments ra ON ra.case_id          = uc.id
+            AND ra.created_at = (
+                SELECT MAX(ra2.created_at)
+                FROM risk_assessments ra2
+                WHERE ra2.case_id = uc.id
+            )
+        WHERE cs.status_name IN ('Approved', 'Rejected')
+    """
+    params = []
+
+    if role_id == 5:          # Broker sees only their own historical cases
+        sql += " AND uc.user_id = %s"
+        params.append(user_id)
+
+    if search:
+        sql += " AND (uc.case_number LIKE %s OR uc.applicant_name LIKE %s OR uc.policy_type LIKE %s)"
+        like = f"%{search}%"
+        params += [like, like, like]
+
+    if status:
+        sql += " AND cs.status_name = %s"
+        params.append(status)
+
+    if policy_type:
+        sql += " AND uc.policy_type = %s"
+        params.append(policy_type)
+
+    if date_from:
+        sql += " AND DATE(uc.created_at) >= %s"
+        params.append(date_from)
+
+    if date_to:
+        sql += " AND DATE(uc.created_at) <= %s"
+        params.append(date_to)
+
+    sql += " ORDER BY uc.created_at DESC LIMIT 200"
+
+    try:
+        return fetch_all(sql, params)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CASE TIMELINE
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/{case_id}/timeline")
+async def get_case_timeline(case_id: int, current_user: dict = Depends(get_current_user)):
+    """
+    Returns an ordered list of events for a case:
+    Created → Document Uploaded → Risk Analyzed → Comment/Decision → ...
+    """
+    events = []
+
+    # 1. Case creation
+    row = fetch_one(
+        """SELECT uc.created_at, uc.applicant_name, uc.policy_type, uc.application_type,
+                  COALESCE(u.full_name, u.username) AS actor
+           FROM underwriting_cases uc
+           LEFT JOIN users u ON uc.user_id = u.id
+           WHERE uc.id = %s""",
+        (case_id,)
+    )
+    if row:
+        events.append({
+            "event_type": "case_created",
+            "title": "Case Submitted",
+            "description": f"{row['applicant_name']} — {row['policy_type']} ({row['application_type']})",
+            "actor": row["actor"] or "Broker",
+            "actor_role": "Broker",
+            "timestamp": str(row["created_at"]),
+            "icon": "create"
+        })
+
+    # 2. Documents uploaded
+    docs = fetch_all(
+        """SELECT d.file_name, d.created_at,
+                  COALESCE(u.full_name, u.username) AS actor
+           FROM documents d
+           LEFT JOIN underwriting_cases uc ON d.case_id = uc.id
+           LEFT JOIN users u ON uc.user_id = u.id
+           WHERE d.case_id = %s
+           ORDER BY d.created_at ASC""",
+        (case_id,)
+    )
+    for doc in docs:
+        events.append({
+            "event_type": "document_uploaded",
+            "title": "Document Uploaded",
+            "description": doc["file_name"],
+            "actor": doc["actor"] or "Broker",
+            "actor_role": "Broker",
+            "timestamp": str(doc["created_at"]),
+            "icon": "upload_file"
+        })
+
+    # 3. Risk assessments
+    risks = fetch_all(
+        "SELECT risk_score, risk_level, created_at FROM risk_assessments WHERE case_id = %s ORDER BY created_at ASC",
+        (case_id,)
+    )
+    for r in risks:
+        events.append({
+            "event_type": "risk_analyzed",
+            "title": "AI Risk Analysis Completed",
+            "description": f"Risk Score: {r['risk_score']} / 100 — Level: {r['risk_level']}",
+            "actor": "AI Engine",
+            "actor_role": "System",
+            "timestamp": str(r["created_at"]),
+            "icon": "psychology"
+        })
+
+    # 4. Decisions
+    decisions = fetch_all(
+        """SELECT ud.decision, ud.remarks, ud.created_at,
+                  COALESCE(u.full_name, u.username) AS actor, u.role_id
+           FROM underwriting_decisions ud
+           LEFT JOIN users u ON ud.user_id = u.id
+           WHERE ud.case_id = %s
+           ORDER BY ud.created_at ASC""",
+        (case_id,)
+    )
+    role_labels = {1: "Admin", 2: "Manager", 3: "Senior Underwriter", 4: "Underwriter", 5: "Broker"}
+    decision_titles = {
+        "approve": "Case Approved ✅",
+        "reject": "Case Rejected ❌",
+        "escalate": "Case Referred / Escalated ⬆️",
+        "request_document": "Additional Documents Requested 📄",
+        "in_progress": "Marked In Progress 🔄"
+    }
+    for d in decisions:
+        events.append({
+            "event_type": f"decision_{d['decision']}",
+            "title": decision_titles.get(d["decision"], f"Decision: {d['decision']}"),
+            "description": d["remarks"] or "",
+            "actor": d["actor"] or "Underwriter",
+            "actor_role": role_labels.get(d["role_id"], "Underwriter"),
+            "timestamp": str(d["created_at"]),
+            "icon": "gavel"
+        })
+
+    # 5. Comments
+    comments = fetch_all(
+        """SELECT cc.comment_text, cc.created_at,
+                  COALESCE(u.full_name, u.username) AS actor, u.role_id
+           FROM case_comments cc
+           LEFT JOIN users u ON cc.user_id = u.id
+           WHERE cc.case_id = %s
+           ORDER BY cc.created_at ASC""",
+        (case_id,)
+    )
+    for c in comments:
+        events.append({
+            "event_type": "comment_added",
+            "title": "Comment Added 💬",
+            "description": c["comment_text"],
+            "actor": c["actor"] or "User",
+            "actor_role": role_labels.get(c["role_id"], "User"),
+            "timestamp": str(c["created_at"]),
+            "icon": "comment"
+        })
+
+    # Sort all events by timestamp
+    events.sort(key=lambda x: x["timestamp"])
+    return events
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BIDIRECTIONAL COMMENTS (Broker ↔ Underwriter)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CommentCreate(BaseModel):
+    comment_text: str
+
+@router.get("/{case_id}/comments")
+async def get_case_comments(case_id: int, current_user: dict = Depends(get_current_user)):
+    """Returns all comments for a case, ordered by time."""
+    comments = fetch_all(
+        """SELECT cc.id, cc.comment_text, cc.created_at,
+                  u.id AS user_id,
+                  COALESCE(u.full_name, u.username) AS author_name,
+                  u.role_id
+           FROM case_comments cc
+           LEFT JOIN users u ON cc.user_id = u.id
+           WHERE cc.case_id = %s
+           ORDER BY cc.created_at ASC""",
+        (case_id,)
+    )
+    role_labels = {1: "Admin", 2: "Underwriting Manager", 3: "Senior Underwriter", 4: "Underwriter", 5: "Broker"}
+    result = []
+    for c in comments:
+        result.append({
+            "id": c["id"],
+            "comment_text": c["comment_text"],
+            "created_at": str(c["created_at"]),
+            "user_id": c["user_id"],
+            "author_name": c["author_name"] or "Unknown",
+            "role_id": c["role_id"],
+            "role_label": role_labels.get(c["role_id"], "User")
+        })
+    return result
+
+
+@router.post("/{case_id}/comments")
+async def add_case_comment(case_id: int, body: CommentCreate, current_user: dict = Depends(get_current_user)):
+    """Adds a comment to a case. Both brokers and underwriters can post."""
+    if not body.comment_text.strip():
+        raise HTTPException(status_code=400, detail="Comment cannot be empty.")
+
+    # Verify case exists
+    case_row = fetch_one("SELECT id, user_id FROM underwriting_cases WHERE id = %s", (case_id,))
+    if not case_row:
+        raise HTTPException(status_code=404, detail="Case not found.")
+
+    try:
+        execute(
+            "INSERT INTO case_comments (case_id, user_id, comment_text) VALUES (%s, %s, %s)",
+            (case_id, current_user["user_id"], body.comment_text.strip())
+        )
+
+        # Notify the other party via underwriter_remarks for broker notifications
+        if current_user["role_id"] == 5:
+            # Broker posted — notify underwriter
+            execute(
+                "UPDATE underwriting_cases SET underwriter_remarks = %s WHERE id = %s",
+                (f"[Broker Comment] {body.comment_text.strip()[:200]}", case_id)
+            )
+        else:
+            # Underwriter posted — update remarks so broker sees notification
+            execute(
+                "UPDATE underwriting_cases SET underwriter_remarks = %s WHERE id = %s",
+                (body.comment_text.strip()[:200], case_id)
+            )
+
+        from services.audit_service import log_action
+        log_action(current_user["user_id"], "CASE_COMMENT", {
+            "case_id": case_id,
+            "comment": body.comment_text[:100]
+        })
+
+        return {"message": "Comment added successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
