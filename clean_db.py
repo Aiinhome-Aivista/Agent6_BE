@@ -1,5 +1,8 @@
 import os
 import shutil
+from dotenv import load_dotenv
+
+load_dotenv()
 
 print("Starting full database cleanup...")
 

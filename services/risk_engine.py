@@ -171,7 +171,7 @@ def check_fraud_in_arango(case_id: int) -> bool:
         print(f"[Fraud Check Error] {e}")
         return False
 
-def _call_llm(context_summary: str, kb_context: str = "", application_type: str = "Existing Claim") -> dict:
+def _call_llm(context_summary: str, kb_context: str = "", application_type: str = "Existing Claim", config_json: str = "[]") -> dict:
     default_resp = {
         "risk_score": 0,
         "risk_level": "UNKNOWN",
@@ -246,7 +246,15 @@ def _call_llm(context_summary: str, kb_context: str = "", application_type: str 
 Your task is to calculate a realistic underwriting risk score and make a decision for a health insurance applicant.
 CRITICAL RULE: You MUST base your evaluation STRICTLY on the KNOWLEDGE BASE CONTEXT provided below. 
 Do NOT use outside knowledge. If the KNOWLEDGE BASE CONTEXT does not contain enough rules or information to evaluate the applicant's specific conditions (like their specific disease, age, or BMI), you MUST set "risk_level" to "UNKNOWN" and "decision" to "Manual Review Required - Missing Knowledge Base Guidelines".
+
+ADDITIONAL CRITICAL RULE: You are provided with a RISK SCORE PARAMETERIZATION JSON CONFIGURATION. You MUST use the weights specified in this JSON to evaluate Risk Score and Breakdown factors (specifically Medical History, Age, Height, Weight, Current Location, Travel History). 
+IMPORTANT: DO NOT use BMI for risk scoring. Exclude BMI completely from the breakdown and risk calculation, and rely on Height and Weight instead, based on the provided JSON config.
 {prompt_logic}
+
+========================
+RISK SCORE PARAMETERIZATION CONFIGURATION (JSON)
+========================
+{config_json}
 
 ========================
 KNOWLEDGE BASE CONTEXT
@@ -362,7 +370,15 @@ def analyse_risk(case_id: int) -> dict:
     kb_context_list = query_rulebook_context(query=search_query, n_results=5)
     kb_context = "\n".join(kb_context_list) if kb_context_list else ""
 
-    llm_result = _call_llm(context_summary, kb_context, application_type)
+    try:
+        config_rows = fetch_all("SELECT parameter_category, condition_description, risk_weight FROM risk_score_config WHERE is_active = 1")
+        import json
+        config_json = json.dumps(config_rows)
+    except Exception as e:
+        print(f"[Config Fetch Error] {e}")
+        config_json = "[]"
+
+    llm_result = _call_llm(context_summary, kb_context, application_type, config_json)
     
     fraud_detected = check_fraud_in_arango(case_id)
 

@@ -563,8 +563,12 @@ async def make_decision(case_id: int, request: DecisionRequest, current_user: di
                 
         elif request.decision.lower() == "approve":
             current_rejections = 0 # reset on successful path
+            
+        assigned_to_val = request.referred_to_user_id
+        if request.decision.lower() in ["approve", "reject", "request_document", "in_progress"]:
+            assigned_to_val = current_user["user_id"]
 
-        execute("UPDATE underwriting_cases SET status_id = (SELECT id FROM case_statuses WHERE status_name = %s), underwriter_remarks = %s, rejection_count = %s, assigned_to = %s, rejection_reason = %s WHERE id = %s", (final_status, final_remarks, current_rejections, request.referred_to_user_id, request.rejection_reason, case_id))
+        execute("UPDATE underwriting_cases SET status_id = (SELECT id FROM case_statuses WHERE status_name = %s), underwriter_remarks = %s, rejection_count = %s, assigned_to = %s, rejection_reason = %s WHERE id = %s", (final_status, final_remarks, current_rejections, assigned_to_val, request.rejection_reason, case_id))
         execute(
             "INSERT INTO underwriting_decisions (case_id, user_id, decision, remarks) VALUES (%s, %s, %s, %s)",
             (case_id, current_user["user_id"], final_decision, final_remarks)

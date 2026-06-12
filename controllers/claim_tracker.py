@@ -263,14 +263,19 @@ async def search_customer_claims(query: str, current_user: dict = Depends(get_cu
             docs = fetch_all("SELECT file_name FROM documents WHERE case_id = %s", (r["id"],))
             doc_names = ", ".join(d["file_name"] for d in docs)
             
-            # Fetch case underwriting decisions from underwriting_decisions
+            # Fetch case underwriting decisions and comments
             decisions = fetch_all("""
                 SELECT ud.decision, ud.remarks, ud.created_at, u.username
                 FROM underwriting_decisions ud
                 LEFT JOIN users u ON ud.user_id = u.id
                 WHERE ud.case_id = %s
-                ORDER BY ud.created_at DESC
-            """, (r["id"],))
+                UNION ALL
+                SELECT 'Comment' AS decision, cc.comment_text AS remarks, cc.created_at, u.username
+                FROM case_comments cc
+                LEFT JOIN users u ON cc.user_id = u.id
+                WHERE cc.case_id = %s
+                ORDER BY created_at DESC
+            """, (r["id"], r["id"]))
             
             # Fetch document errors and verification status along with OCR text
             case_docs = fetch_all("""
@@ -345,8 +350,13 @@ async def search_customer_claims(query: str, current_user: dict = Depends(get_cu
                     FROM underwriting_decisions ud
                     LEFT JOIN users u ON ud.user_id = u.id
                     WHERE ud.case_id = %s
-                    ORDER BY ud.created_at DESC
-                """, (linked_case["id"],))
+                    UNION ALL
+                    SELECT 'Comment' AS decision, cc.comment_text AS remarks, cc.created_at, u.username
+                    FROM case_comments cc
+                    LEFT JOIN users u ON cc.user_id = u.id
+                    WHERE cc.case_id = %s
+                    ORDER BY created_at DESC
+                """, (linked_case["id"], linked_case["id"]))
                 
                 case_info = fetch_one("SELECT document_errors FROM underwriting_cases WHERE id = %s", (linked_case["id"],))
                 if case_info and case_info.get("document_errors"):
@@ -706,7 +716,7 @@ async def get_all_customer_claims(limit: int = 100, current_user: dict = Depends
                    COALESCE((SELECT full_name FROM users WHERE id = uc.assigned_to), (SELECT username FROM users WHERE id = uc.assigned_to), 'None') AS assigned_user
             FROM underwriting_cases uc
             JOIN case_statuses cs ON uc.status_id = cs.id
-            WHERE cs.status_name IN ('Approved', 'Rejected', 'Referred')
+            WHERE cs.status_name IN ('Approved', 'Rejected', 'Referred', 'On Hold', 'Under Review', 'Missing Documents')
             ORDER BY created_at DESC
             LIMIT %s
         """, (limit,))
