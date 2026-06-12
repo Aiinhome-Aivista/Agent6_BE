@@ -1005,6 +1005,14 @@ async def add_case_comment(case_id: int, body: CommentCreate, current_user: dict
             (case_id, current_user["user_id"], body.comment_text.strip())
         )
 
+        # Update case status to "On Hold"
+        execute(
+            "UPDATE underwriting_cases SET status_id = (SELECT id FROM case_statuses WHERE status_name = 'On Hold') WHERE id = %s",
+            (case_id,)
+        )
+
+        from services.mail_service import send_bulk_emails
+
         # Notify the other party via underwriter_remarks for broker notifications
         if current_user["role_id"] == 5:
             # Broker posted — notify underwriter
@@ -1012,12 +1020,24 @@ async def add_case_comment(case_id: int, body: CommentCreate, current_user: dict
                 "UPDATE underwriting_cases SET underwriter_remarks = %s WHERE id = %s",
                 (f"[Broker Comment] {body.comment_text.strip()[:200]}", case_id)
             )
+            try:
+                assigned = fetch_one("SELECT u.email, u.username as name FROM underwriting_cases uc JOIN users u ON uc.assigned_to = u.id WHERE uc.id = %s", (case_id,))
+                if assigned and assigned["email"]:
+                    send_bulk_emails([assigned], f"[IUA] 💬 New Comment on Case {case_id}", f"A new comment was added to case {case_id}:<br><br>{body.comment_text}<br><br>Status is now On Hold.")
+            except Exception as e:
+                print(f"Broker comment email failed: {e}")
         else:
             # Underwriter posted — update remarks so broker sees notification
             execute(
                 "UPDATE underwriting_cases SET underwriter_remarks = %s WHERE id = %s",
                 (body.comment_text.strip()[:200], case_id)
             )
+            try:
+                broker = fetch_one("SELECT u.email, u.username as name FROM underwriting_cases uc JOIN users u ON uc.user_id = u.id WHERE uc.id = %s", (case_id,))
+                if broker and broker["email"]:
+                    send_bulk_emails([broker], f"[IUA] 💬 New Comment on Case {case_id}", f"A new comment was added to your case {case_id}:<br><br>{body.comment_text}<br><br>Status is now On Hold.")
+            except Exception as e:
+                print(f"UW comment email failed: {e}")
 
         from services.audit_service import log_action
         log_action(current_user["user_id"], "CASE_COMMENT", {
