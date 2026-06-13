@@ -149,6 +149,35 @@ async def get_cases(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/notifications")
+async def get_notifications(current_user: dict = Depends(get_current_user)):
+    """Fetches all cases with underwriter_remarks for notifications, including historical."""
+    role_id = current_user["role_id"]
+    user_id = current_user["user_id"]
+
+    sql = """SELECT uc.id, uc.case_number, uc.underwriter_remarks, uc.created_at
+             FROM underwriting_cases uc 
+             WHERE uc.underwriter_remarks IS NOT NULL AND uc.underwriter_remarks != ''"""
+    
+    params = []
+    
+    if role_id == 5:
+        # Brokers see only their own cases
+        sql += " AND uc.user_id = %s"
+        params.append(user_id)
+    elif role_id in [3, 4]:
+        # Underwriters see cases unassigned or assigned to them
+        sql += " AND (uc.assigned_to IS NULL OR uc.assigned_to = %s)"
+        params.append(user_id)
+
+    sql += " ORDER BY uc.updated_at DESC, uc.created_at DESC LIMIT 50"
+
+    try:
+        return fetch_all(sql, params)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 from fastapi import Form
 
