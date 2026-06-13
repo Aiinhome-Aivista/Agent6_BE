@@ -81,7 +81,7 @@ async def update_case(case_id: int, case: CaseUpdate, current_user: dict = Depen
 
     sql = """
         UPDATE underwriting_cases 
-        SET applicant_name=%s, policy_type=%s, product_type_id=COALESCE((SELECT id FROM product_types WHERE product_name = %s), 1), existing_policy_details=%s, requested_coverage=%s, priority=%s, sla_due_at=%s, status_id=(SELECT id FROM case_statuses WHERE status_name = 'Submitted')
+        SET applicant_name=%s, policy_type=%s, product_type_id=COALESCE((SELECT id FROM product_types WHERE product_name = %s), 1), existing_policy_details=%s, requested_coverage=%s, priority=%s, sla_due_at=%s, status_id=(SELECT id FROM case_statuses WHERE status_name = 'Underwriter Review')
         WHERE id=%s AND user_id=%s
     """
     execute(sql, (case.applicant_name, case.policy_type, case.product_type, case.existing_policy_details, case.requested_coverage, case.priority, sla_due_at.strftime('%Y-%m-%d %H:%M:%S'), case_id, current_user["user_id"]))
@@ -125,11 +125,12 @@ async def get_cases(current_user: dict = Depends(get_current_user)):
 
     sql = """SELECT uc.id, uc.case_number, uc.applicant_name, uc.policy_type, uc.application_type, pt.product_name AS product_type, uc.requested_coverage, uc.existing_policy_details, cs.status_name AS status, uc.priority, uc.sla_due_at, uc.created_at, uc.company_name, uc.product_name, uc.underwriter_remarks, uc.user_id, uc.assigned_to,
              (SELECT COALESCE(full_name, username) FROM users WHERE id = uc.assigned_to) AS assigned_user,
-             (SELECT role_id FROM case_mail_log cml WHERE cml.case_id = uc.id AND cml.is_escalated = 0 AND cml.action_taken = 0 ORDER BY cml.id DESC LIMIT 1) AS current_role_id
+             (SELECT role_id FROM case_mail_log cml WHERE cml.case_id = uc.id AND cml.is_escalated = 0 AND cml.action_taken = 0 ORDER BY cml.id DESC LIMIT 1) AS current_role_id,
+             (SELECT COUNT(*) FROM case_comments cc JOIN users u ON cc.user_id = u.id WHERE cc.case_id = uc.id AND u.role_id != 5) AS underwriter_comment_count
              FROM underwriting_cases uc 
              LEFT JOIN case_statuses cs ON uc.status_id = cs.id
              LEFT JOIN product_types pt ON uc.product_type_id = pt.id
-             WHERE (cs.status_name IS NULL OR cs.status_name NOT IN ('Approved', 'Rejected'))"""
+             WHERE (cs.status_name IS NULL OR cs.status_name NOT IN ('Approved'))"""
     
     params = []
     
@@ -794,7 +795,7 @@ async def get_historical_cases(
                 FROM risk_assessments ra2
                 WHERE ra2.case_id = uc.id
             )
-        WHERE cs.status_name IN ('Approved', 'Rejected')
+        WHERE cs.status_name = 'Approved'
     """
     params = []
 
