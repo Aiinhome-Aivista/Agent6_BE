@@ -709,13 +709,16 @@ async def get_all_customer_claims(limit: int = 100, current_user: dict = Depends
             SELECT id, customer_name, aadhaar, pan, policy_no, claim_id, company, amount, status, risk_score, documents, created_at, 'None' AS assigned_user
             FROM customer_claims
             UNION ALL
-            SELECT uc.id, uc.applicant_name AS customer_name, 'N/A' AS aadhaar, 'N/A' AS pan, 
+            SELECT uc.id, uc.applicant_name AS customer_name, 
+                   COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(ra.findings, '$.extracted_details.patient_details.aadhaar')), 'null'), 'N/A') AS aadhaar, 
+                   COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(ra.findings, '$.extracted_details.patient_details.pan')), 'null'), 'N/A') AS pan, 
                    uc.case_number AS policy_no, CONCAT('CASE-', uc.case_number) AS claim_id, 
                    'Internal Insurance DB' AS company, uc.requested_coverage AS amount, 
                    cs.status_name AS status, 0 AS risk_score, '' AS documents, uc.created_at,
                    COALESCE((SELECT full_name FROM users WHERE id = uc.assigned_to), (SELECT username FROM users WHERE id = uc.assigned_to), 'None') AS assigned_user
             FROM underwriting_cases uc
             JOIN case_statuses cs ON uc.status_id = cs.id
+            LEFT JOIN risk_assessments ra ON ra.case_id = uc.id
             WHERE cs.status_name IN ('Approved', 'Rejected', 'Referred', 'On Hold', 'Under Review', 'Missing Documents')
             ORDER BY created_at DESC
             LIMIT %s

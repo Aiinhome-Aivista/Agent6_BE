@@ -112,6 +112,14 @@ def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Ty
     if "active lifestyle" in text_lower or "athlete" in text_lower: lifestyle = "Active"
     elif "moderate lifestyle" in text_lower or "exercises occasionally" in text_lower: lifestyle = "Moderate"
 
+    aadhaar = None
+    aadhaar_match = re.search(r'\b(\d{4}\s?\d{4}\s?\d{4})\b', text_lower)
+    if aadhaar_match: aadhaar = aadhaar_match.group(1).replace(' ', '')
+
+    pan = None
+    pan_match = re.search(r'\b([a-zA-Z]{5}\d{4}[a-zA-Z])\b', text_lower)
+    if pan_match: pan = pan_match.group(1).upper()
+
     if application_type == "New Policy":
         coverage = None
         policy_num = None
@@ -122,7 +130,8 @@ def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Ty
         "patient_details": {
             "age": age, "gender": gender, "occupation": occupation, "marital_status": marital_status,
             "contact_number": contact, "email": email, "medical_condition": medical_cond,
-            "bmi": bmi, "blood_pressure": bp, "smoking": smoking, "lifestyle": lifestyle, "claim_ratio": claim_ratio
+            "bmi": bmi, "blood_pressure": bp, "smoking": smoking, "lifestyle": lifestyle, "claim_ratio": claim_ratio,
+            "aadhaar": aadhaar, "pan": pan
         },
         "policy_details": {
             "policy_number": policy_num, "policy_summary": policy_type, "coverage_amount": coverage,
@@ -294,7 +303,7 @@ Return ONLY JSON:
   "extracted_details": {{
     "policy_details": {{ "nominee": "string", "policy_number": "string", "annual_premium": number, "policy_summary": "string", "coverage_amount": number, "policy_term_years": number }},
     "validity_dates": {{ "from_date": "string", "to_date": "string" }},
-    "patient_details": {{ "age": number, "bmi": number, "gender": "string", "blood_pressure": "string", "medical_condition": "string", "contact_number": "string", "email": "string" }}
+    "patient_details": {{ "age": number, "bmi": number, "gender": "string", "blood_pressure": "string", "medical_condition": "string", "contact_number": "string", "email": "string", "aadhaar": "string", "pan": "string" }}
   }},
   "base_premium_inr": number,
   "tax_inr": number,
@@ -425,7 +434,9 @@ def analyse_risk(case_id: int) -> dict:
             "email": (patient_details.get("email") if isinstance(patient_details, dict) else None) or patient.get("email"),
             "medical_condition": (patient_details.get("medical_condition") if isinstance(patient_details, dict) else None) or patient.get("medical_condition"),
             "bmi": (patient_details.get("bmi") if isinstance(patient_details, dict) else None) or patient.get("bmi"),
-            "blood_pressure": (patient_details.get("blood_pressure") if isinstance(patient_details, dict) else None) or patient.get("blood_pressure")
+            "blood_pressure": (patient_details.get("blood_pressure") if isinstance(patient_details, dict) else None) or patient.get("blood_pressure"),
+            "aadhaar": (patient_details.get("aadhaar") if isinstance(patient_details, dict) else None) or patient.get("aadhaar"),
+            "pan": (patient_details.get("pan") if isinstance(patient_details, dict) else None) or patient.get("pan")
         },
         "policy_details": {
             "policy_number": (policy_details.get("policy_number") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("policy_number"),
