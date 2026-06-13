@@ -1,0 +1,255 @@
+{
+    "case_statuses": [
+        {
+            "id": 1,
+            "status_name": "Submitted",
+            "description": null
+        },
+        {
+            "id": 2,
+            "status_name": "Intake Processing",
+            "description": null
+        },
+        {
+            "id": 3,
+            "status_name": "Intake Processing - Error",
+            "description": null
+        },
+        {
+            "id": 4,
+            "status_name": "OCR Completed",
+            "description": null
+        },
+        {
+            "id": 5,
+            "status_name": "Awaiting API Enrichment",
+            "description": null
+        },
+        {
+            "id": 6,
+            "status_name": "Risk Analysis In Progress",
+            "description": null
+        },
+        {
+            "id": 7,
+            "status_name": "Pending Additional Documents",
+            "description": null
+        },
+        {
+            "id": 8,
+            "status_name": "Re-Submitted",
+            "description": null
+        },
+        {
+            "id": 9,
+            "status_name": "Underwriter Review",
+            "description": null
+        },
+        {
+            "id": 10,
+            "status_name": "Referred",
+            "description": null
+        },
+        {
+            "id": 11,
+            "status_name": "Approved",
+            "description": null
+        },
+        {
+            "id": 12,
+            "status_name": "Rejected",
+            "description": null
+        },
+        {
+            "id": 13,
+            "status_name": "Policy Issued",
+            "description": null
+        },
+        {
+            "id": 14,
+            "status_name": "Closed",
+            "description": null
+        },
+        {
+            "id": 15,
+            "status_name": "On Hold",
+            "description": null
+        }
+    ],
+    "product_types": [
+        {
+            "id": 1,
+            "product_name": "Standard",
+            "description": null
+        },
+        {
+            "id": 2,
+            "product_name": "Gold Plan",
+            "description": null
+        },
+        {
+            "id": 3,
+            "product_name": "Platinum Plan",
+            "description": null
+        },
+        {
+            "id": 4,
+            "product_name": "Premium Plan",
+            "description": null
+        },
+        {
+            "id": 5,
+            "product_name": "Family Floater",
+            "description": null
+        },
+        {
+            "id": 6,
+            "product_name": "Senior Citizen Plans",
+            "description": null
+        }
+    ],
+    "document_types": [
+        {
+            "id": 11,
+            "type_name": "Bank Statement"
+        },
+        {
+            "id": 6,
+            "type_name": "Claim Form"
+        },
+        {
+            "id": 10,
+            "type_name": "Discharge Summary"
+        },
+        {
+            "id": 7,
+            "type_name": "Hospital Bills"
+        },
+        {
+            "id": 9,
+            "type_name": "Identity Proof"
+        },
+        {
+            "id": 3,
+            "type_name": "KYC Document"
+        },
+        {
+            "id": 2,
+            "type_name": "Medical Report"
+        },
+        {
+            "id": 5,
+            "type_name": "Other"
+        },
+        {
+            "id": 12,
+            "type_name": "Passport Size Photo"
+        },
+        {
+            "id": 4,
+            "type_name": "Past Claim History"
+        },
+        {
+            "id": 8,
+            "type_name": "Prescriptions"
+        },
+        {
+            "id": 1,
+            "type_name": "Proposal Form"
+        }
+    ],
+    "risk_score_config": [
+        {
+            "id": 1,
+            "parameter_category": "Medical History",
+            "condition_description": "Pre-existing diabetes",
+            "risk_weight": 30,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        },
+        {
+            "id": 2,
+            "parameter_category": "Medical History",
+            "condition_description": "History of heart disease",
+            "risk_weight": 40,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        },
+        {
+            "id": 3,
+            "parameter_category": "Age",
+            "condition_description": "Age between 50 and 60",
+            "risk_weight": 15,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        },
+        {
+            "id": 4,
+            "parameter_category": "Age",
+            "condition_description": "Age > 60",
+            "risk_weight": 25,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        },
+        {
+            "id": 5,
+            "parameter_category": "Height",
+            "condition_description": "Height below 150 cm",
+            "risk_weight": 5,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        },
+        {
+            "id": 6,
+            "parameter_category": "Weight",
+            "condition_description": "Weight above 100 kg",
+            "risk_weight": 20,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        },
+        {
+            "id": 7,
+            "parameter_category": "Current Location",
+            "condition_description": "High-risk epidemic zone",
+            "risk_weight": 35,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        },
+        {
+            "id": 8,
+            "parameter_category": "Travel History",
+            "condition_description": "Travelled to high-risk country recently",
+            "risk_weight": 25,
+            "is_active": 1,
+            "created_at": "2026-06-12 13:52:45"
+        }
+    ],
+    "system_config": [
+        {
+            "id": 1,
+            "config_key": "MAX_REJECTIONS",
+            "config_value": "3",
+            "description": "Max sequential rejections before auto-escalation",
+            "created_at": "2026-05-23 23:27:21",
+            "updated_at": "2026-05-23 23:27:21"
+        },
+        {
+            "id": 2,
+            "config_key": "SLA_DAYS",
+            "config_value": "5",
+            "description": "Maximum SLA days for a case",
+            "created_at": "2026-06-04 16:39:45",
+            "updated_at": "2026-06-04 16:39:45"
+        },
+        {
+            "id": 3,
+            "config_key": "BASE_CONFIDENCE",
+            "config_value": "92",
+            "description": "Base confidence percentage for AI Risk Engine",
+            "created_at": "2026-06-13 16:04:48",
+            "updated_at": "2026-06-13 16:04:48"
+        }
+    ],
+    "external_api_configs": [],
+    "mail_config": []
+}

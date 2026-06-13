@@ -335,6 +335,193 @@ APPLICANT DATA ({application_type})
         print(f"[LLM] Error: {e}")
         return default_resp
 
+def calculate_past_cases_comparison(case_id: int) -> dict:
+    from database.connection import fetch_one, fetch_all
+    import json
+    import re
+    # 1. Fetch current case details
+    curr_case = fetch_one("""
+        SELECT uc.id, uc.policy_type, uc.application_type, uc.requested_coverage, ra.findings
+        FROM underwriting_cases uc
+        LEFT JOIN risk_assessments ra ON ra.case_id = uc.id
+        WHERE uc.id = %s
+        ORDER BY ra.created_at DESC LIMIT 1
+    """, (case_id,))
+    
+    if not curr_case:
+        return {
+            "acceptance_probability": 0.0,
+            "rejection_probability": 0.0,
+            "compared_cases_count": 0,
+            "compared_cases": []
+        }
+    
+    curr_policy = curr_case.get("policy_type")
+    curr_app_type = curr_case.get("application_type")
+    curr_coverage = float(curr_case.get("requested_coverage") or 0)
+    
+    # Parse findings for current medical condition and age
+    curr_med_cond = ""
+    curr_age = None
+    if curr_case.get("findings"):
+        try:
+            findings = json.loads(curr_case["findings"]) if isinstance(curr_case["findings"], str) else curr_case["findings"]
+            patient_details = findings.get("extracted_details", {}).get("patient_details", {})
+            curr_med_cond = str(patient_details.get("medical_condition") or "").strip().lower()
+            curr_age = patient_details.get("age")
+            if curr_age is not None:
+                curr_age = float(curr_age)
+        except Exception as e:
+            print(f"[calculate_past_cases_comparison Error parsing current case findings] {e}")
+            
+    # 2. Query completed historical cases (Approved / Rejected)
+    completed_cases = fetch_all("""
+        SELECT uc.id, uc.case_number, uc.applicant_name, uc.policy_type, uc.application_type, uc.requested_coverage, cs.status_name AS status, ra.findings
+        FROM underwriting_cases uc
+        JOIN case_statuses cs ON uc.status_id = cs.id
+        LEFT JOIN risk_assessments ra ON ra.case_id = uc.id
+        WHERE cs.status_name IN ('Approved', 'Rejected') AND uc.id != %s
+    """, (case_id,))
+    
+    similar_cases = []
+    
+    for past in completed_cases:
+        # Check basic categories
+        past_policy = past.get("policy_type")
+        past_app_type = past.get("application_type")
+        past_coverage = float(past.get("requested_coverage") or 0)
+        
+        # Policy Type Match
+        policy_match = (past_policy == curr_policy)
+        policy_score = 0.25 if policy_match else 0.0
+        policy_detail = f"Match ({past_policy})" if policy_match else f"Mismatch ({curr_policy or 'N/A'} vs {past_policy or 'N/A'})"
+        
+        # Application Type Match
+        app_type_match = (past_app_type == curr_app_type)
+        app_type_score = 0.15 if app_type_match else 0.0
+        app_type_detail = f"Match ({past_app_type})" if app_type_match else f"Mismatch ({curr_app_type or 'N/A'} vs {past_app_type or 'N/A'})"
+        
+        # Parse past case findings
+        past_med_cond = ""
+        past_age = None
+        if past.get("findings"):
+            try:
+                p_findings = json.loads(past["findings"]) if isinstance(past["findings"], str) else past["findings"]
+                p_patient = p_findings.get("extracted_details", {}).get("patient_details", {})
+                past_med_cond = str(p_patient.get("medical_condition") or "").strip().lower()
+                past_age = p_patient.get("age")
+                if past_age is not None:
+                    past_age = float(past_age)
+            except Exception as e:
+                print(f"[calculate_past_cases_comparison Error parsing past case findings] {e}")
+                
+        # Calculate Medical Condition Similarity (+0.35)
+        med_score = 0.0
+        med_detail = ""
+        if curr_med_cond and past_med_cond:
+            # Simple text similarity: check word overlaps
+            curr_words = set(re.findall(r'\w+', curr_med_cond))
+            past_words = set(re.findall(r'\w+', past_med_cond))
+            # Filter out generic stop words
+            stops = {"none", "na", "n/a", "no", "major", "illness", "healthy", "and", "or", "disease", "history", "with"}
+            curr_words = curr_words - stops
+            past_words = past_words - stops
+            
+            if curr_words and past_words:
+                overlap = curr_words.intersection(past_words)
+                if overlap:
+                    ratio = len(overlap) / max(len(curr_words), len(past_words))
+                    med_score = round(0.35 * ratio, 2)
+                    med_detail = f"Match: {', '.join(overlap)} ({int(ratio*100)}% overlap)"
+                else:
+                    med_detail = f"No common terms ({curr_med_cond} vs {past_med_cond})"
+            elif not curr_words and not past_words:
+                # Both are "No Major Illness" or equivalent
+                med_score = 0.35
+                med_detail = "Both No Major Illness"
+        elif not curr_med_cond and not past_med_cond:
+            med_score = 0.35
+            med_detail = "Both No Major Illness"
+        else:
+            med_detail = f"Mismatch ({curr_med_cond or 'None'} vs {past_med_cond or 'None'})"
+            
+        # Calculate Age Proximity (+0.15)
+        age_score = 0.0
+        age_detail = ""
+        if curr_age is not None and past_age is not None:
+            age_diff = abs(curr_age - past_age)
+            if age_diff <= 5:
+                age_score = 0.15
+            elif age_diff <= 10:
+                age_score = 0.10
+            elif age_diff <= 15:
+                age_score = 0.05
+            age_detail = f"Diff: {int(age_diff)} yrs ({int(curr_age)} vs {int(past_age)})"
+        elif curr_age is None and past_age is None:
+            age_score = 0.15
+            age_detail = "Both missing age info"
+        else:
+            age_detail = f"Missing info ({curr_age or 'N/A'} vs {past_age or 'N/A'})"
+            
+        # Calculate Coverage Proximity (+0.10)
+        cov_score = 0.0
+        cov_detail = ""
+        if curr_coverage > 0 and past_coverage > 0:
+            cov_ratio = min(curr_coverage, past_coverage) / max(curr_coverage, past_coverage)
+            if cov_ratio >= 0.7:  # within 30%
+                cov_score = 0.10
+            elif cov_ratio >= 0.5:  # within 50%
+                cov_score = 0.05
+            cov_detail = f"Ratio: {int(cov_ratio * 100)}% (${int(curr_coverage):,} vs ${int(past_coverage):,})"
+        elif curr_coverage == 0 and past_coverage == 0:
+            cov_score = 0.10
+            cov_detail = "Both $0 coverage"
+        else:
+            cov_detail = f"Mismatch (${int(curr_coverage):,} vs ${int(past_coverage):,})"
+            
+        # Normalize score representation
+        score = policy_score + app_type_score + med_score + age_score + cov_score
+        score = round(score, 2)
+        
+        # Include as similar if score is >= 0.50
+        if score >= 0.50:
+            similar_cases.append({
+                "case_id": past["id"],
+                "case_number": past["case_number"],
+                "applicant_name": past["applicant_name"],
+                "status": past["status"],
+                "policy_type": past_policy,
+                "application_type": past_app_type,
+                "requested_coverage": past_coverage,
+                "medical_condition": past_med_cond.title() or "None",
+                "similarity_score": int(score * 100),
+                "similarity_breakdown": {
+                    "policy_type": {"score": int(policy_score * 100), "detail": policy_detail, "max_score": 25},
+                    "application_type": {"score": int(app_type_score * 100), "detail": app_type_detail, "max_score": 15},
+                    "medical_condition": {"score": int(round(med_score * 100)), "detail": med_detail, "max_score": 35},
+                    "age": {"score": int(age_score * 100), "detail": age_detail, "max_score": 15},
+                    "coverage": {"score": int(cov_score * 100), "detail": cov_detail, "max_score": 10}
+                }
+            })
+            
+    # Sort similar cases by similarity score descending
+    similar_cases.sort(key=lambda x: x["similarity_score"], reverse=True)
+    
+    # Calculate probabilities
+    total = len(similar_cases)
+    approved = sum(1 for c in similar_cases if c["status"].lower() == "approved")
+    rejected = sum(1 for c in similar_cases if c["status"].lower() == "rejected")
+    
+    acceptance_prob = round((approved / total) * 100, 1) if total > 0 else 0.0
+    rejection_prob = round((rejected / total) * 100, 1) if total > 0 else 0.0
+    
+    return {
+        "acceptance_probability": acceptance_prob,
+        "rejection_probability": rejection_prob,
+        "compared_cases_count": total,
+        "compared_cases": similar_cases[:10]  # Limit to top 10 similar cases
+    }
+
 def analyse_risk(case_id: int) -> dict:
     from database.connection import fetch_all, execute
     import re
@@ -402,21 +589,77 @@ def analyse_risk(case_id: int) -> dict:
         human_review_required = risk_level in ["HIGH", "CRITICAL", "MEDIUM", "UNKNOWN"]
         recommendation = decision
 
-    # Programmatic Confidence Score Calculation
-    base_confidence = 0.92
-    if fraud_detected:
-        base_confidence -= 0.45
-    if not patient.get("bmi") or not patient.get("blood_pressure"):
-        base_confidence -= 0.10
-    if not python_extracted.get("patient_details", {}).get("occupation"):
-        base_confidence -= 0.05
-    if not docs:
-        base_confidence -= 0.20
+    # Programmatic Confidence Score Calculation (Weighted Formula)
+    # 1. Data Completeness (0.30 weight)
+    completeness_fields = 0
+    patient_details_extracted = python_extracted.get("patient_details", {})
+    policy_details_extracted = python_extracted.get("policy_details", {})
     
-    if decision in ["Clarification Required", "Refer Underwriter"]:
-        base_confidence -= 0.15
+    if patient_details_extracted.get("age"): completeness_fields += 1
+    if patient_details_extracted.get("gender"): completeness_fields += 1
+    if patient_details_extracted.get("medical_condition"): completeness_fields += 1
+    if patient_details_extracted.get("bmi"): completeness_fields += 1
+    if patient_details_extracted.get("blood_pressure"): completeness_fields += 1
+    if patient_details_extracted.get("occupation"): completeness_fields += 1
+    if patient_details_extracted.get("contact_number") or patient_details_extracted.get("email"): completeness_fields += 1
+    if patient_details_extracted.get("aadhaar") or patient_details_extracted.get("pan"): completeness_fields += 1
+    if policy_details_extracted.get("coverage_amount") or (case_rec[0].get("requested_coverage") if case_rec else None): completeness_fields += 1
+    if docs: completeness_fields += 1
+    
+    completeness_score = completeness_fields / 10.0
+
+    # 2. Data Reliability (0.25 weight)
+    reliability_score = 1.0
+    if fraud_detected:
+        reliability_score -= 0.6
+    if not docs:
+        reliability_score -= 0.3
         
-    ai_confidence = max(0.40, min(0.98, base_confidence))
+    neg_signals = llm_result.get("negative_signals", [])
+    if isinstance(neg_signals, list) and len(neg_signals) > 0:
+        reliability_score -= min(0.2, len(neg_signals) * 0.1)
+        
+    reliability_score = max(0.1, min(1.0, reliability_score))
+
+    # 3. Guideline Match (0.30 weight)
+    guideline_score = 1.0
+    decision_str = str(decision).lower()
+    if risk_level == "UNKNOWN" or "missing knowledge base guidelines" in decision_str:
+        guideline_score = 0.1
+    elif decision_str == "clarification required":
+        guideline_score = 0.5
+    else:
+        # Check citations in breakdown
+        has_citations = False
+        llm_breakdown = llm_result.get("breakdown", [])
+        if isinstance(llm_breakdown, list) and len(llm_breakdown) > 0:
+            for b in llm_breakdown:
+                if isinstance(b, dict) and b.get("citations") and len(b.get("citations")) > 0:
+                    has_citations = True
+                    break
+        if not has_citations:
+            guideline_score = 0.8
+
+    # 4. Historical Similarity (0.15 weight)
+    similarity_score = 0.0
+    try:
+        past_cases = calculate_past_cases_comparison(case_id)
+        if past_cases.get("compared_cases_count", 0) > 0:
+            compared_cases = past_cases.get("compared_cases", [])
+            if compared_cases and len(compared_cases) > 0:
+                similarity_score = compared_cases[0].get("similarity_score", 0.0) / 100.0
+    except Exception as e:
+        print(f"[risk_engine Confidence Calc - Similarity Error] {e}")
+
+    # Calculate final confidence score
+    calculated_confidence = (
+        0.30 * completeness_score +
+        0.25 * reliability_score +
+        0.30 * guideline_score +
+        0.15 * similarity_score
+    )
+    
+    ai_confidence = max(0.40, min(0.98, calculated_confidence))
 
     extracted_details = llm_result.get("extracted_details", {}) if isinstance(llm_result, dict) else {}
     if not isinstance(extracted_details, dict): extracted_details = {}
@@ -507,6 +750,12 @@ def analyse_risk(case_id: int) -> dict:
         "breakdown": llm_breakdown,
         "ai_narrative": llm_result.get("underwriting_narrative", ""),
         "ai_confidence": ai_confidence,
+        "confidence_breakdown": {
+            "completeness": completeness_score,
+            "reliability": reliability_score,
+            "guideline_match": guideline_score,
+            "historical_similarity": similarity_score
+        },
         "ai_flags": llm_result.get("negative_signals", []),
         "extracted_details": safe_extracted_details
     }
