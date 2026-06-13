@@ -772,6 +772,14 @@ async def get_historical_cases(
     role_id = current_user["role_id"]
     user_id = current_user["user_id"]
 
+    # Set is_active = 0 for underwriting cases created more than 90 days ago
+    try:
+        execute(
+            "UPDATE underwriting_cases SET is_active = 0 WHERE created_at < DATE_SUB(NOW(), INTERVAL 90 DAY) AND is_active = 1"
+        )
+    except Exception as ue:
+        print(f"[DB WARNING] Failed to auto-update is_active flag for older cases: {ue}")
+
     sql = """
         SELECT
             uc.id, uc.case_number, uc.applicant_name, uc.policy_type,
@@ -799,8 +807,8 @@ async def get_historical_cases(
     """
     params = []
 
-    if role_id == 5:          # Broker sees only their own historical cases
-        sql += " AND uc.user_id = %s"
+    if role_id == 5:          # Broker sees only their own active historical cases
+        sql += " AND uc.user_id = %s AND uc.is_active = 1"
         params.append(user_id)
 
     if search:
