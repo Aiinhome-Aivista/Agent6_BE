@@ -256,6 +256,13 @@ async def search_customer_claims(query: str, current_user: dict = Depends(get_cu
             if risk_row and risk_row["findings"]:
                 try:
                     risk_findings = json.loads(risk_row["findings"]) if isinstance(risk_row["findings"], str) else risk_row["findings"]
+                    if isinstance(risk_findings, dict):
+                        pat_details = risk_findings.get("extracted_details", {}).get("patient_details", {})
+                        if isinstance(pat_details, dict):
+                            if resolved_aadhaar == "N/A" and pat_details.get("aadhaar"):
+                                resolved_aadhaar = pat_details.get("aadhaar")
+                            if resolved_pan == "N/A" and pat_details.get("pan"):
+                                resolved_pan = pat_details.get("pan")
                 except Exception:
                     pass
 
@@ -481,6 +488,21 @@ async def search_customer_claims(query: str, current_user: dict = Depends(get_cu
     merged_claims = []
     seen_claim_ids = set()
     
+    # Sanitize resolved Aadhaar and PAN values
+    if resolved_aadhaar:
+        cleaned_aad = str(resolved_aadhaar).replace(" ", "").replace("-", "").strip()
+        if not (len(cleaned_aad) == 12 and cleaned_aad.isdigit()):
+            resolved_aadhaar = "N/A"
+    else:
+        resolved_aadhaar = "N/A"
+
+    if resolved_pan:
+        cleaned_pan = str(resolved_pan).replace(" ", "").replace("-", "").strip()
+        if not (len(cleaned_pan) == 10 and cleaned_pan[:5].isalpha() and cleaned_pan[5:9].isdigit() and cleaned_pan[9].isalpha()):
+            resolved_pan = "N/A"
+    else:
+        resolved_pan = "N/A"
+
     for c in (internal_cases + internal_ledger_claims + csv_claims + external_claims):
         cid = c["claim_id"]
         if cid not in seen_claim_ids:
@@ -731,6 +753,23 @@ async def get_all_customer_claims(limit: int = 100, current_user: dict = Depends
             claim["amount"] = float(claim["amount"]) if claim.get("amount") is not None else 0.0
             claim["risk_breakdown"] = get_risk_breakdown_for_claim(claim["claim_id"], claim["risk_score"])
             
+            # Sanitize Aadhaar/PAN
+            aad_val = claim.get("aadhaar")
+            if aad_val:
+                cleaned_aad = str(aad_val).replace(" ", "").replace("-", "").strip()
+                if not (len(cleaned_aad) == 12 and cleaned_aad.isdigit()):
+                    claim["aadhaar"] = "N/A"
+            else:
+                claim["aadhaar"] = "N/A"
+
+            pan_val = claim.get("pan")
+            if pan_val:
+                cleaned_pan = str(pan_val).replace(" ", "").replace("-", "").strip()
+                if not (len(cleaned_pan) == 10 and cleaned_pan[:5].isalpha() and cleaned_pan[5:9].isdigit() and cleaned_pan[9].isalpha()):
+                    claim["pan"] = "N/A"
+            else:
+                claim["pan"] = "N/A"
+
             # Find all matching claims for this customer using Aadhaar, PAN or Customer Name
             aadhaar = claim.get("aadhaar")
             pan = claim.get("pan")

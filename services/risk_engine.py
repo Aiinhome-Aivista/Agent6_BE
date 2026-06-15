@@ -667,6 +667,26 @@ def analyse_risk(case_id: int) -> dict:
     policy_details = extracted_details.get("policy_details", {}) if isinstance(extracted_details, dict) else {}
     validity_dates = extracted_details.get("validity_dates", {}) if isinstance(extracted_details, dict) else {}
 
+    raw_aad = (patient_details.get("aadhaar") if isinstance(patient_details, dict) else None) or patient.get("aadhaar")
+    if raw_aad:
+        cleaned_aad = str(raw_aad).replace(" ", "").replace("-", "").strip()
+        if len(cleaned_aad) == 12 and cleaned_aad.isdigit():
+            aad_val = raw_aad
+        else:
+            aad_val = "N/A"
+    else:
+        aad_val = "N/A"
+
+    raw_pan = (patient_details.get("pan") if isinstance(patient_details, dict) else None) or patient.get("pan")
+    if raw_pan:
+        cleaned_pan = str(raw_pan).replace(" ", "").replace("-", "").strip()
+        if len(cleaned_pan) == 10 and cleaned_pan[:5].isalpha() and cleaned_pan[5:9].isdigit() and cleaned_pan[9].isalpha():
+            pan_val = raw_pan.upper()
+        else:
+            pan_val = "N/A"
+    else:
+        pan_val = "N/A"
+
     safe_extracted_details = {
         "patient_details": {
             "age": (patient_details.get("age") if isinstance(patient_details, dict) else None) or patient.get("age"),
@@ -678,8 +698,8 @@ def analyse_risk(case_id: int) -> dict:
             "medical_condition": (patient_details.get("medical_condition") if isinstance(patient_details, dict) else None) or patient.get("medical_condition"),
             "bmi": (patient_details.get("bmi") if isinstance(patient_details, dict) else None) or patient.get("bmi"),
             "blood_pressure": (patient_details.get("blood_pressure") if isinstance(patient_details, dict) else None) or patient.get("blood_pressure"),
-            "aadhaar": (patient_details.get("aadhaar") if isinstance(patient_details, dict) else None) or patient.get("aadhaar"),
-            "pan": (patient_details.get("pan") if isinstance(patient_details, dict) else None) or patient.get("pan")
+            "aadhaar": aad_val,
+            "pan": pan_val
         },
         "policy_details": {
             "policy_number": (policy_details.get("policy_number") if isinstance(policy_details, dict) else None) or python_extracted.get("policy_details", {}).get("policy_number"),
