@@ -587,7 +587,7 @@ Strictly respond with a JSON object in this exact format (no markdown wrappers, 
 }}
 """
             kwargs = {"api_key": MISTRAL_API_KEY, "timeout": 120}
-            if os.getenv("MISTRAL_MODE") == "Local":
+            if os.getenv("MISTRAL_MODE", "Local") == "Local":
                 kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
             client = MistralClient(**kwargs)
             response = client.chat(

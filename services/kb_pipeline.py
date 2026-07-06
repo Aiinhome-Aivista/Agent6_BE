@@ -18,7 +18,7 @@ ARANGO_DB       = os.getenv("ARANGO_DB")
 ARANGO_USERNAME = os.getenv("ARANGO_USER")
 ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-MISTRAL_MODEL   = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
+MISTRAL_MODEL   = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE", "Local") == "Local" else os.getenv("MISTRAL_MODEL")
 
 RELEVANCE_THRESHOLD = 75   # Documents below this score are rejected
 
@@ -403,7 +403,7 @@ class KnowledgeBasePipeline:
             from mistralai.client import MistralClient
             from mistralai.models.chat_completion import ChatMessage
             kwargs = {"api_key": MISTRAL_API_KEY, "timeout": 300}
-            if os.getenv("MISTRAL_MODE") == "Local":
+            if os.getenv("MISTRAL_MODE", "Local") == "Local":
                 kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
             client = MistralClient(**kwargs)
             response = client.chat(

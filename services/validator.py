@@ -13,7 +13,7 @@ class DocumentValidator:
         print(f"[{self.name}] Validating uploaded documents for {application_type}")
         
         MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
+        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE", "Local") == "Local" else os.getenv("MISTRAL_MODEL")
         
         if not MISTRAL_API_KEY or MISTRAL_API_KEY == "your_mistral_key_here":
              print(f"[{self.name}] MISTRAL_API_KEY not found. Skipping validation.")
@@ -47,7 +47,7 @@ Return STRICT JSON format:
 }}
 """
             kwargs = {"api_key": MISTRAL_API_KEY, "timeout": 60}
-            if os.getenv("MISTRAL_MODE") == "Local":
+            if os.getenv("MISTRAL_MODE", "Local") == "Local":
                 kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
             client = MistralClient(**kwargs)
             response = client.chat(

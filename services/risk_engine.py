@@ -7,7 +7,7 @@ from services.vector_store import query_risk_context, query_rulebook_context
 load_dotenv()
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
+MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE", "Local") == "Local" else os.getenv("MISTRAL_MODEL")
 
 def extract_details_with_python(text: str, policy_type: str = "Unknown Policy Type", application_type: str = "Existing Claim") -> dict:
     if not text:
@@ -151,11 +151,11 @@ def detect_target_policy(raw_text: str) -> dict:
         from mistralai.client import MistralClient
         from mistralai.models.chat_completion import ChatMessage
         kwargs = {"api_key": api_key}
-        if os.getenv("MISTRAL_MODE") == "Local":
+        if os.getenv("MISTRAL_MODE", "Local") == "Local":
             kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
         client = MistralClient(**kwargs)
         prompt = f"Extract the target Insurance Company Name and Product/Policy Name from the applicant's text. Return ONLY a JSON object with 'company_name' and 'product_name'. If not explicitly mentioned, return null for that field.\n\nTEXT: {raw_text[:10000]}"
-        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
+        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE", "Local") == "Local" else os.getenv("MISTRAL_MODEL")
         resp = client.chat(
             model=MISTRAL_MODEL,
             messages=[ChatMessage(role="user", content=prompt)],
@@ -211,7 +211,7 @@ def _call_llm(context_summary: str, kb_context: str = "", application_type: str 
     try:
         from mistralai.client import MistralClient
         kwargs = {"api_key": MISTRAL_API_KEY}
-        if os.getenv("MISTRAL_MODE") == "Local":
+        if os.getenv("MISTRAL_MODE", "Local") == "Local":
             kwargs["endpoint"] = os.getenv("MISTRAL_LOCAL_URL")
         client = MistralClient(**kwargs)
 
@@ -319,7 +319,7 @@ APPLICANT DATA ({application_type})
 ========================
 {context_summary[:15000]}
 """
-        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE") == "Local" else os.getenv("MISTRAL_MODEL")
+        MISTRAL_MODEL = os.getenv("MISTRAL_LOCAL_MODEL") if os.getenv("MISTRAL_MODE", "Local") == "Local" else os.getenv("MISTRAL_MODEL")
         from mistralai.models.chat_completion import ChatMessage
         response = client.chat(
             model=MISTRAL_MODEL,
